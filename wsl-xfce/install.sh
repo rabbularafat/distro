@@ -29,6 +29,6 @@ else
 fi
 
 # Run the setup
-cd "$INSTALL_DIR"
+cd "$INSTALL_DIR/wsl-xfce"
 chmod +x setup.sh scripts/*.sh
 ./setup.sh
