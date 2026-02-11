@@ -1,38 +1,33 @@
-# distro
+# 🚀 Distro: Multi-Platform XFCE Desktop Installers
 
-# WSL Debian XFCE4 + XRDP Installer (Pro Version)
+This repository contains professional, automated scripts to set up a full XFCE4 desktop environment on various platforms.
 
-A modular, enterprise-grade installer for setting up a full XFCE4 desktop environment on WSL2 Debian with XRDP support.
+---
 
-## 🚀 One-Line Installation
+## 💻 WSL Debian (Windows)
+Set up a high-performance XFCE desktop using XRDP on Windows Subsystem for Linux.
 
-Run this command in your WSL Debian terminal:
-
+**Quick Install:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/wsl-xfce/install.sh | bash
 ```
+👉 [View WSL Instructions](./wsl-xfce/README.md)
 
-## 📦 What's Included
+---
 
-- **System Update**: Automated `apt` update and upgrade.
-- **XFCE4 Desktop**: Full desktop environment installation.
-- **XRDP Server**: Remote Desktop protocol setup for Windows connection.
-- **WSL Optimization**: Automatic `systemd` enablement in `wsl.conf`.
-- **Session Control**: Automatic `.xsession` configuration.
+## 📱 Termux Debian (Android)
+Transform your Android device into a Linux workstation using Proot-Distro and VNC.
 
-## 🛠 Project Structure
+**Quick Install:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/termux-xfce/setup.sh | bash
+```
+👉 [View Termux Instructions](./termux-xfce/README.md)
 
-- `setup.sh`: Main entry point.
-- `scripts/utils.sh`: Color logging system.
-- `scripts/01-system.sh`: Package management.
-- `scripts/02-xfce.sh`: Desktop environment.
-- `scripts/03-xrdp.sh`: Remote access.
-- `scripts/04-wsl.sh`: WSL tweaks.
+---
 
-## 🏁 Post-Installation
-
-After the script finishes:
-1. Run `wsl --shutdown` in Windows PowerShell.
-2. Re-open Debian.
-3. Check IP with `ip addr`.
-4. Connect via Windows Remote Desktop (`mstsc`).
+### Features
+- ✅ Automated dependencies
+- ✅ Optimized for Remote Desktop (XRDP/VNC)
+- ✅ User creation and permission handling
+- ✅ Beautiful terminal logging
