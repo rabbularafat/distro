@@ -1,3 +1,5 @@
+# distro
+
 # WSL Debian XFCE4 + XRDP Installer (Pro Version)
 
 A modular, enterprise-grade installer for setting up a full XFCE4 desktop environment on WSL2 Debian with XRDP support.
