@@ -26,6 +26,17 @@ curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/termux-xfc
 
 ---
 
+## 🖥️ Unix XFCE (Native PC)
+Setup XFCE on a real Ubuntu or Debian machine with automated XRDP.
+
+**Quick Install:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/unix-xfce/setup.sh | sudo bash
+```
+👉 [View Unix Instructions](./unix-xfce/README.md)
+
+---
+
 ### Features
 - ✅ Automated dependencies
 - ✅ Optimized for Remote Desktop (XRDP/VNC)
