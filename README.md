@@ -37,6 +37,17 @@ curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/unix-xfce/
 
 ---
 
+## 🍎 macOS XFCE (via Multipass)
+Run a Linux desktop on your Mac using Multipass virtualization.
+
+**Quick Install:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/mac-xfce/setup.sh | bash
+```
+👉 [View macOS Instructions](./mac-xfce/README.md)
+
+---
+
 ### Features
 - ✅ Automated dependencies
 - ✅ Optimized for Remote Desktop (XRDP/VNC)
