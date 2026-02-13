@@ -9,6 +9,10 @@ export MAGENTA='\033[0;35m'
 export CYAN='\033[0;36m'
 export NC='\033[0m' # No Color
 
+# Automate installations (No prompts)
+export DEBIAN_FRONTEND=noninteractive
+export DEBCONF_NONINTERACTIVE_SEEN=true
+
 # Logging functions
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1"

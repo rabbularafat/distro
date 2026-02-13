@@ -17,6 +17,10 @@ CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
 NC='\033[0m'
 
+# Automate installations (No prompts)
+export DEBIAN_FRONTEND=noninteractive
+export DEBCONF_NONINTERACTIVE_SEEN=true
+
 log_step() { echo -e "\n${BLUE}[STEP]${NC} ${CYAN}$1${NC}"; }
 log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
