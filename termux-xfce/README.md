@@ -9,7 +9,7 @@ A premium, high-performance XFCE4 desktop environment running inside a Debian Pr
 Run this single command in your Termux terminal to automate the entire installation:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/termux-xfce/setup.sh | bash
+pkg install curl -y && curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/termux-xfce/setup.sh | bash
 ```
 
 ---
@@ -22,7 +22,7 @@ If you prefer to set up your environment manually, follow these detailed steps:
 Update the core system and install required tools:
 ```bash
 pkg update -y && pkg upgrade -y
-pkg install proot-distro pulseaudio wget -y
+pkg install proot-distro pulseaudio wget curl -y
 ```
 
 ### 2. Guest OS Setup (Debian)
@@ -45,18 +45,10 @@ adduser remote
 usermod -aG sudo remote
 ```
 
-Configure `sudo` access:
+Configure `sudo` access (automated way):
 ```bash
-# Edit sudoers file
-nano /etc/sudoers
-
-# Add these lines under 'User privilege specification':
-root   ALL=(ALL:ALL) ALL
-remote ALL=(ALL:ALL) ALL
-%sudo  ALL=(ALL:ALL) ALL
-
-# Press Ctrl+O, Enter, Ctrl+X to save and exit
-chmod 440 /etc/sudoers
+echo "remote ALL=(ALL:ALL) ALL" > /etc/sudoers.d/remote
+chmod 440 /etc/sudoers.d/remote
 exit
 ```
 
@@ -85,7 +77,7 @@ Add the following content to `xstartup`:
 #!/bin/sh
 unset SESSION_MANAGER
 unset DBUS_SESSION_BUS_ADDRESS
-exec startxfce4 &
+exec startxfce4
 ```
 *Save and exit (`Ctrl+O`, `Enter`, `Ctrl+X`).*
 
