@@ -29,9 +29,17 @@ download_dependency() {
 if [ -f "$SCRIPTS_DIR/utils.sh" ]; then
     source "$SCRIPTS_DIR/utils.sh"
 else
-    # Fallback for curl | bash
-    TERMUX_TMP="${TMPDIR:-/data/data/com.termux/files/usr/tmp}"
-    mkdir -p "$TERMUX_TMP"
+    # Fallback for curl | bash — robustly find a writable tmp dir
+    if [ -n "$TMPDIR" ] && mkdir -p "$TMPDIR" 2>/dev/null; then
+        TERMUX_TMP="$TMPDIR"
+    elif [ -n "$PREFIX" ] && mkdir -p "$PREFIX/tmp" 2>/dev/null; then
+        TERMUX_TMP="$PREFIX/tmp"
+    elif mkdir -p /data/data/com.termux/files/usr/tmp 2>/dev/null; then
+        TERMUX_TMP="/data/data/com.termux/files/usr/tmp"
+    else
+        TERMUX_TMP="$HOME/.cache/termux-xfce"
+        mkdir -p "$TERMUX_TMP"
+    fi
     download_dependency "scripts/utils.sh" "$TERMUX_TMP/termux_utils.sh"
     source "$TERMUX_TMP/termux_utils.sh"
 fi
