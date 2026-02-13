@@ -39,7 +39,7 @@ check_env() {
 install_system_deps() {
     log_step "Updating System Packages"
     sudo apt update && sudo apt upgrade -y
-    sudo apt install -y wget curl gnupg2 software-properties-common dbus-x11
+    sudo apt install -y wget curl gnupg2 dbus-x11
     log_success "System updated."
 }
 

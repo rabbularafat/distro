@@ -84,7 +84,7 @@ Launch your Linux terminal and run these steps.
 ### 1. Update System & Install Essentials
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y curl wget gnupg2 software-properties-common dbus-x11
+sudo apt install -y curl wget gnupg2 dbus-x11
 ```
 
 ### 2. Enable systemd (Required for XRDP)
