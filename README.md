@@ -1,55 +1,35 @@
 # 🚀 Distro: Multi-Platform XFCE Desktop Installers
 
-This repository contains professional, automated scripts to set up a full XFCE4 desktop environment on various platforms.
+This repository contains professional, automated scripts to set up a full XFCE4 desktop environment on various platforms. Each platform now features a **single, comprehensive guide** to avoid confusion.
 
 ---
 
 ## 💻 WSL Debian (Windows)
 Set up a high-performance XFCE desktop using XRDP on Windows Subsystem for Linux.
-
-**Quick Install:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/wsl-xfce/install.sh | bash
-```
-👉 [View WSL Instructions](./wsl-xfce/README.md)
-
----
-
-## 📱 Termux Debian (Android)
-Transform your Android device into a Linux workstation using Proot-Distro and VNC.
-
-**Quick Install:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/termux-xfce/setup.sh | bash
-```
-👉 [View Termux Instructions](./termux-xfce/README.md)
+👉 **[Full Unified Guide](./wsl-xfce/README.md)**
 
 ---
 
 ## 🖥️ Unix XFCE (Native PC)
 Setup XFCE on a real Ubuntu or Debian machine with automated XRDP.
+👉 **[Full Unified Guide](./unix-xfce/README.md)**
 
-**Quick Install:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/unix-xfce/setup.sh | sudo bash
-```
-👉 [View Unix Instructions](./unix-xfce/README.md)
+---
+
+## 📱 Termux Debian (Android)
+Transform your Android device into a Linux workstation using Proot-Distro and VNC.
+👉 **[Full Unified Guide](./termux-xfce/README.md)**
 
 ---
 
 ## 🍎 macOS XFCE (via Multipass)
 Run a Linux desktop on your Mac using Multipass virtualization.
-
-**Quick Install:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/mac-xfce/setup.sh | bash
-```
-👉 [View macOS Instructions](./mac-xfce/README.md)
+👉 **[Full Unified Guide](./mac-xfce/README.md)**
 
 ---
 
 ### Features
-- ✅ Automated dependencies
-- ✅ Optimized for Remote Desktop (XRDP/VNC)
-- ✅ User creation and permission handling
-- ✅ Beautiful terminal logging
+- ✅ **One-Shot Enterprise Installers**: Run a single command to set everything up.
+- ✅ **Single-File Guides**: No more clicking through multiple files.
+- ✅ **Standardized Steps**: Consistent installation experience across all platforms.
+- ✅ **Optimized for Remote Desktop**: Pre-configured for XRDP or VNC.
