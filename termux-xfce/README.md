@@ -89,6 +89,24 @@ Make it executable:
 chmod +x ~/.vnc/xstartup
 ```
 
+### 6. Web Browser Setup (Chromium)
+Install Chromium and system fonts to avoid the **"Failed to execute default web browser"** error:
+```bash
+sudo apt install chromium fonts-noto-core fonts-noto-color-emoji -y
+```
+
+Chromium requires `--no-sandbox` in proot. Add this flag globally so it works from every shortcut and link:
+```bash
+sudo mkdir -p /etc/chromium.d
+echo 'export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --no-sandbox"' | sudo tee /etc/chromium.d/proot-flags
+```
+
+Set Chromium as the default browser for XFCE:
+```bash
+mkdir -p ~/.config/xfce4
+echo "WebBrowser=chromium" > ~/.config/xfce4/helpers.rc
+```
+
 ---
 
 ## 🏁 Starting the Desktop
@@ -117,6 +135,45 @@ vncserver -localhost -geometry 1280x720
 
 ---
 
+## 🐛 Troubleshooting
+
+### "Failed to execute default web browser — Input/output error"
+
+This error appears when **no web browser** is installed inside the Debian proot environment, or when the XFCE preferred browser is not configured.
+
+**Fix (if already installed without a browser):**
+
+1. Login to Debian:
+   ```bash
+   proot-distro login debian --user remote
+   ```
+
+2. Install Chromium:
+   ```bash
+   sudo apt install chromium fonts-noto-core fonts-noto-color-emoji -y
+   ```
+
+3. Enable `--no-sandbox` globally (required for proot):
+   ```bash
+   sudo mkdir -p /etc/chromium.d
+   echo 'export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --no-sandbox"' | sudo tee /etc/chromium.d/proot-flags
+   ```
+
+4. Set Chromium as the default browser:
+   ```bash
+   mkdir -p ~/.config/xfce4
+   echo "WebBrowser=chromium" > ~/.config/xfce4/helpers.rc
+   sudo update-alternatives --set x-www-browser /usr/bin/chromium
+   ```
+
+5. Restart your VNC session:
+   ```bash
+   vncserver -kill :1
+   vncserver -localhost -geometry 1280x720
+   ```
+
+---
+
 ## 💡 Performance Tips
 - Use **PulseAudio** for sound support.
 - Adjust `-geometry` to match your phone's screen resolution for better clarity.
@@ -124,3 +181,4 @@ vncserver -localhost -geometry 1280x720
 
 ---
 *Created with ❤️ for the Distro Project.*
+
