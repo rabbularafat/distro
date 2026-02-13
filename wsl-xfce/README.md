@@ -14,20 +14,33 @@ curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/wsl-xfce/e
 
 ---
 
-## 🛠 Step 1: Windows Preparation (PowerShell Administrator)
+## 🛠 Step 1: Windows Preparation
 
-Before installing Linux, you must enable the necessary Windows features.
+Before installing Linux, you must enable the necessary Windows features. You can do this using the GUI or PowerShell.
 
+### Option A: Using the Windows GUI (Recommended)
+1.  Press `Win + R`, type `optionalfeatures`, and hit **Enter**.
+2.  In the "Turn Windows features on or off" window, ensure the following are **checked**:
+    -   [x] **Virtual Machine Platform**
+    -   [x] **Windows Subsystem for Linux**
+    -   [x] **SMB Direct** (Optimizes file transfer)
+    -   [x] **Work Folders Client**
+3.  Click **OK** and wait for the process to finish.
+4.  **🚨 RESTART YOUR PC NOW.**
+
+### Option B: Using PowerShell (Administrator)
 1.  **Open PowerShell as Administrator.**
-2.  **Enable WSL & Virtual Machine Platform:**
+2.  **Run these commands:**
     ```powershell
-    # Enable WSL
+    # Enable WSL & Virtual Machine Platform
     dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
-
-    # Enable Virtual Machine Platform
     dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+
+    # Enable SMB Direct & Work Folders (as shown in guide image)
+    dism.exe /online /enable-feature /featurename:SMB-Direct /all /norestart
+    dism.exe /online /enable-feature /featurename:WorkFolders-Client /all /norestart
     ```
-3.  **🚨 RESTART YOUR PC NOW.** This step is required for the features to activate.
+3.  **🚨 RESTART YOUR PC NOW.**
 
 ---
 
@@ -121,9 +134,9 @@ sudo systemctl start xrdp
 
 1.  **Find your IP:** In your Linux terminal, run:
     ```bash
-    ip addr | grep eth0
+    hostname -I
     ```
-    *Look for the `inet` address (e.g., 172.25.10.5).*
+    *Look for the address (e.g., 172.25.10.5).*
 2.  **Open RDP:** Press `Win + R`, type `mstsc`, and hit Enter.
 3.  **Login:**
     - **Computer:** Paste your WSL IP.
