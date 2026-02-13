@@ -1,6 +1,6 @@
-# 🚀 WSL2 + Debian + XFCE4 + XRDP: The Ultimate Guide
+# 🚀 WSL2 XFCE4 Desktop Guide (Debian, Ubuntu, Kali)
 
-This single guide contains everything you need to set up a full Linux Desktop Environment (XFCE4) on Windows 10 or 11 using WSL2 and Remote Desktop (XRDP).
+This ultimate guide contains everything you need to set up a full Linux Desktop Environment (XFCE4) on Windows 10 or 11 using WSL2 and Remote Desktop (XRDP). This process works for **Debian**, **Ubuntu**, and **Kali Linux**.
 
 ---
 
@@ -21,7 +21,7 @@ Before installing Linux, you must enable the necessary Windows features.
 
 ---
 
-## 📦 SECTION 2: Install WSL & Linux
+## 📦 SECTION 2: Install Your Distribution
 
 1.  **Check Version Support:** Run `winver`. You need Windows 10 (Build 19041+) or Windows 11.
 2.  **Set WSL 2 as Default:**
@@ -29,11 +29,11 @@ Before installing Linux, you must enable the necessary Windows features.
     wsl --install
     wsl --set-default-version 2
     ```
-3.  **Download Debian:**
-    - Open the **Microsoft Store**.
-    - Search for **Debian**.
-    - Click **Get** and then **Open**.
-4.  **Initial Setup:** Follow the prompts in the terminal to create your **Username** and **Password**.
+3.  **Download from Microsoft Store:**
+    - **Debian**: [Get Debian](https://apps.microsoft.com/store/detail/debian/9MSVKQC78PK6)
+    - **Ubuntu**: [Get Ubuntu](https://apps.microsoft.com/store/detail/ubuntu/9PDXG59B9PCL)
+    - **Kali Linux**: [Get Kali Linux](https://apps.microsoft.com/store/detail/kali-linux/9PKR34T7PVMX)
+4.  **Initial Setup:** Open your chosen distro and create your **Username** and **Password**.
 
 ---
 
@@ -49,9 +49,9 @@ If you get an error like *"Virtualization not enabled"*:
 
 ---
 
-## 🐧 SECTION 4: Linux Desktop Configuration (Inside Debian)
+## 🐧 SECTION 4: Linux Desktop Configuration (Inside Terminal)
 
-Launch your Debian terminal and run these steps in order.
+Launch your Linux terminal (Debian, Ubuntu, or Kali) and run these steps.
 
 ### 1. Update System & Install Essentials
 ```bash
@@ -63,7 +63,7 @@ sudo apt install -y curl wget gnupg2 software-properties-common dbus-x11
 ```bash
 sudo nano /etc/wsl.conf
 ```
-Add the following lines to the file:
+Add the following lines:
 ```ini
 [boot]
 systemd=true
@@ -75,9 +75,9 @@ Go back to **Windows PowerShell** and run:
 ```powershell
 wsl --shutdown
 ```
-Then reopen **Debian** from the Start menu.
+Then reopen your Linux distro.
 
-### 4. Create a Remote User (Recommended)
+### 4. Create a Remote User (Optional)
 ```bash
 sudo adduser remote
 sudo usermod -aG sudo,adm remote
@@ -110,13 +110,13 @@ sudo systemctl enable xrdp
 sudo systemctl start xrdp
 ```
 
-Check if it's running: `sudo systemctl status xrdp` (Should be green/active).
+Check if it's running: `sudo systemctl status xrdp` (Should be active).
 
 ---
 
 ## 🔌 SECTION 6: Connect via Remote Desktop
 
-1.  **Find your IP:** In Debian, run:
+1.  **Find your IP:** In your Linux terminal, run:
     ```bash
     ip addr | grep eth0
     ```
@@ -129,24 +129,14 @@ Check if it's running: `sudo systemctl status xrdp` (Should be green/active).
 
 ---
 
-## ⚙️ SECTION 7: Global Improvements (Optional)
-
-### Disable WSLg
-If you want to disable the default Windows Linux GUI support to prevent conflicts:
-1. Create `C:\Users\YOUR_USERNAME\.wslconfig`.
-2. Add:
-   ```ini
-   [wsl2]
-   guiApplications=false
-   ```
-3. Run `wsl --shutdown` in PowerShell.
-
-### Dependency Fixes
-If you get errors during installation, ensure all dependencies are met:
+## 🧬 Note for Kali Linux Users (Win-KeX)
+While the XRDP method above works perfectly, Kali Linux also offers a native tool called **Win-KeX**.
+To use it instead:
 ```bash
 sudo apt update
-sudo apt install -y curl wget dependencies-met-check
+sudo apt install kali-win-kex -y
+kex --esm --ip --sound
 ```
 
 ---
-**🎉 Everything is now set up! Your WSL Debian system is ready for use.**
+**🎉 Setup Complete! Your WSL Desktop is ready.**
