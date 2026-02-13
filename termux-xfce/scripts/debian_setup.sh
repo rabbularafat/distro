@@ -23,6 +23,7 @@ chmod 440 /etc/sudoers.d/remote
 # Configure VNC for the remote user
 USER_HOME="/home/remote"
 mkdir -p "$USER_HOME/.vnc"
+mkdir -p "$USER_HOME/.config/tigervnc"
 
 cat <<EOF > "$USER_HOME/.vnc/xstartup"
 #!/bin/sh
@@ -33,5 +34,6 @@ EOF
 
 chmod +x "$USER_HOME/.vnc/xstartup"
 chown -R remote:remote "$USER_HOME/.vnc"
+chown -R remote:remote "$USER_HOME/.config/tigervnc"
 
 echo "Debian guest configuration complete."

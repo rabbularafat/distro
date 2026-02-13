@@ -67,8 +67,11 @@ Set up the VNC startup script:
 # Set your VNC password
 vncpasswd
 
-# Create and edit startup script
+# Create required directories (prevents TigerVNC migration error)
 mkdir -p ~/.vnc
+mkdir -p ~/.config/tigervnc
+
+# Create and edit startup script
 nano ~/.vnc/xstartup
 ```
 
