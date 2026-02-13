@@ -4,16 +4,6 @@ This ultimate guide contains everything you need to set up a full Linux Desktop 
 
 ---
 
-## ⚡ Quick Installation (Enterprise)
-
-If your WSL distribution is already installed, run this single command to transform it into a desktop-ready system:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/wsl-xfce/enterprise_installer.sh | bash
-```
-
----
-
 ## 🛠 Step 1: Windows Preparation
 
 Before installing Linux, you must enable the necessary Windows features. You can do this using the GUI or PowerShell.
@@ -36,7 +26,7 @@ Before installing Linux, you must enable the necessary Windows features. You can
     dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
     dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
 
-    # Enable SMB Direct & Work Folders (as shown in guide image)
+    # Enable SMB Direct & Work Folders
     dism.exe /online /enable-feature /featurename:SMB-Direct /all /norestart
     dism.exe /online /enable-feature /featurename:WorkFolders-Client /all /norestart
     ```
@@ -47,7 +37,7 @@ Before installing Linux, you must enable the necessary Windows features. You can
 ## 📦 Step 2: Install Your Distribution
 
 1.  **Check Version Support:** Run `winver`. You need Windows 10 (Build 19041+) or Windows 11.
-2.  **Set WSL 2 as Default:**
+2.  **Set WSL 2 as Default:** (Run in PowerShell)
     ```powershell
     wsl --install
     wsl --set-default-version 2
@@ -71,50 +61,54 @@ If you get an error like *"Virtualization not enabled"*:
 
 ---
 
-## 🐧 Step 4: Linux Desktop Configuration (Inside Terminal)
+## ⚡ Option A: Quick Installation (Recommended)
 
-Launch your Linux terminal (Debian, Ubuntu, or Kali) and run these steps.
+> **⚠️ CRITICAL:** This command MUST be run inside your **Linux Terminal** (WSL), not PowerShell.
 
-1.  **Update System & Install Essentials**
-    ```bash
-    sudo apt update && sudo apt upgrade -y
-    sudo apt install -y curl wget gnupg2 software-properties-common dbus-x11
-    ```
+If your Linux distro is installed and you've created your user, run this:
 
-2.  **Enable systemd (Required for XRDP)**
-    ```bash
-    sudo nano /etc/wsl.conf
-    ```
-    Add the following lines:
-    ```ini
-    [boot]
-    systemd=true
-    ```
-    Save (`Ctrl+O`, `Enter`) and Exit (`Ctrl+X`).
+```bash
+# First, ensure curl is installed in Linux
+sudo apt update && sudo apt install -y curl
 
-3.  **Restart WSL**
-    Go back to **Windows PowerShell** and run:
-    ```powershell
-    wsl --shutdown
-    ```
-    Then reopen your Linux distro.
-
-4.  **Install XFCE4 Desktop**
-    ```bash
-    sudo apt update
-    sudo apt install xfce4 xfce4-goodies -y
-    sudo systemctl set-default graphical.target
-    ```
+# Run the automated installer
+curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/wsl-xfce/enterprise_installer.sh | bash
+```
 
 ---
 
-## 🖥 Step 5: Install & Configure XRDP
+## 🐧 Option B: Manual Configuration (Step-by-Step)
 
-Run these commands inside your Linux terminal:
+Launch your Linux terminal and run these steps.
 
+### 1. Update System & Install Essentials
 ```bash
-# Install XRDP
-sudo apt install xrdp -y
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y curl wget gnupg2 software-properties-common dbus-x11
+```
+
+### 2. Enable systemd (Required for XRDP)
+```bash
+sudo nano /etc/wsl.conf
+```
+Add the following lines:
+```ini
+[boot]
+systemd=true
+```
+Save (`Ctrl+O`, `Enter`) and Exit (`Ctrl+X`).
+
+### 3. Restart WSL
+Go back to **Windows PowerShell** and run:
+```powershell
+wsl --shutdown
+```
+Then reopen your Linux distro.
+
+### 4. Install XFCE4 Desktop & XRDP
+```bash
+sudo apt update
+sudo apt install xfce4 xfce4-goodies xrdp -y
 
 # Configure XRDP to use XFCE
 echo xfce4-session > ~/.xsession
@@ -124,30 +118,29 @@ chmod +x ~/.xsession
 sudo sed -i 's/console/anybody/g' /etc/X11/Xwrapper.config
 
 # Enable and Start XRDP Service
+sudo systemctl set-default graphical.target
 sudo systemctl enable xrdp
 sudo systemctl start xrdp
 ```
 
 ---
 
-## 🔌 Step 6: Connect via Remote Desktop
+## 🔌 Step 4: Connect via Remote Desktop
 
 1.  **Find your IP:** In your Linux terminal, run:
     ```bash
     hostname -I
     ```
-    *Look for the address (e.g., 172.25.10.5).*
 2.  **Open RDP:** Press `Win + R`, type `mstsc`, and hit Enter.
 3.  **Login:**
     - **Computer:** Paste your WSL IP.
-    - **Username:** Your own Linux username.
-    - **Password:** The password you created.
+    - **Username:** Your Linux username.
+    - **Password:** Your Linux password.
 
 ---
 
 ## 🧬 Note for Kali Linux Users (Win-KeX)
-While the XRDP method above works perfectly, Kali Linux also offers a native tool called **Win-KeX**.
-To use it instead:
+Kali Linux users can also use **Win-KeX** for a more integrated experience:
 ```bash
 sudo apt update
 sudo apt install kali-win-kex -y
