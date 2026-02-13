@@ -30,8 +30,10 @@ if [ -f "$SCRIPTS_DIR/utils.sh" ]; then
     source "$SCRIPTS_DIR/utils.sh"
 else
     # Fallback for curl | bash
-    download_dependency "scripts/utils.sh" "/tmp/termux_utils.sh"
-    source "/tmp/termux_utils.sh"
+    TERMUX_TMP="${TMPDIR:-/data/data/com.termux/files/usr/tmp}"
+    mkdir -p "$TERMUX_TMP"
+    download_dependency "scripts/utils.sh" "$TERMUX_TMP/termux_utils.sh"
+    source "$TERMUX_TMP/termux_utils.sh"
 fi
 
 log_info "Starting Termux Desktop environment setup..."
