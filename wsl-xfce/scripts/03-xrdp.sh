@@ -3,7 +3,7 @@ source "$(dirname "$0")/utils.sh"
 
 log_info "Step 3: Installing and configuring XRDP..."
 
-sudo apt install -y xrdp
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp
 
 # Configure XRDP to use XFCE
 log_info "Setting XFCE as default session for XRDP..."

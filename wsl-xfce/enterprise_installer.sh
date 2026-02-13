@@ -18,6 +18,8 @@ MAGENTA='\033[0;35m'
 NC='\033[0m'
 
 # Automate installations (No prompts)
+# NOTE: We use 'sudo DEBIAN_FRONTEND=noninteractive' on each apt call
+# because plain 'export' does NOT survive through sudo.
 export DEBIAN_FRONTEND=noninteractive
 export DEBCONF_NONINTERACTIVE_SEEN=true
 
@@ -40,10 +42,27 @@ check_env() {
 }
 
 # --- Module 1: System Update ---
+preconfigure_keyboard() {
+    log_step "Preconfiguring keyboard layout (prevents interactive prompts)"
+    # Preconfigure keyboard-configuration so dpkg never opens the dialog
+    echo 'keyboard-configuration keyboard-configuration/layoutcode string us' | sudo debconf-set-selections
+    echo 'keyboard-configuration keyboard-configuration/layout select English (US)' | sudo debconf-set-selections
+    echo 'keyboard-configuration keyboard-configuration/model select Generic 105-key PC (intl.)' | sudo debconf-set-selections
+    echo 'keyboard-configuration keyboard-configuration/variant select English (US)' | sudo debconf-set-selections
+    echo 'keyboard-configuration keyboard-configuration/optionscode string ' | sudo debconf-set-selections
+    # Also preconfigure tzdata and locales to prevent other interactive prompts
+    echo 'tzdata tzdata/Areas select Etc' | sudo debconf-set-selections
+    echo 'tzdata tzdata/Zones/Etc select UTC' | sudo debconf-set-selections
+    echo 'locales locales/default_environment_locale select en_US.UTF-8' | sudo debconf-set-selections
+    echo 'locales locales/locales_to_be_generated multiselect en_US.UTF-8 UTF-8' | sudo debconf-set-selections
+    log_success "Keyboard and locale preconfigured."
+}
+
 install_system_deps() {
     log_step "Updating System Packages"
-    sudo apt update && sudo apt upgrade -y
-    sudo apt install -y wget curl gnupg2 dbus-x11
+    sudo DEBIAN_FRONTEND=noninteractive apt-get update
+    sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y wget curl gnupg2 dbus-x11
     log_success "System updated."
 }
 
@@ -51,14 +70,14 @@ install_system_deps() {
 install_xfce() {
     log_step "Installing XFCE4 Desktop Environment"
     log_info "This might take a while..."
-    sudo apt install -y xfce4 xfce4-goodies
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" xfce4 xfce4-goodies
     log_success "XFCE4 installed."
 }
 
 # --- Module 3: XRDP ---
 install_xrdp() {
     log_step "Installing and Configuring XRDP"
-    sudo apt install -y xrdp
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp
     
     # Session config
     echo "xfce4-session" > ~/.xsession
@@ -115,6 +134,7 @@ echo -e "${CYAN}│     WSL DEBIAN XFCE4 ENTERPRISE INSTALLER v2.0     │${NC}"
 echo -e "${CYAN}└──────────────────────────────────────────────────────┘${NC}"
 
 check_env
+preconfigure_keyboard
 install_system_deps
 install_xfce
 install_xrdp

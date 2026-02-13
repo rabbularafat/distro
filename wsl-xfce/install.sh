@@ -16,7 +16,7 @@ echo "===================================================="
 # Check if git is installed
 if ! command -v git &> /dev/null; then
     echo "Git not found. Installing git..."
-    sudo apt update && sudo apt install -y git
+    sudo DEBIAN_FRONTEND=noninteractive apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git
 fi
 
 # Clone or Update the installer
