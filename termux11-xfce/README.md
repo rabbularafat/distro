@@ -13,7 +13,7 @@ This repository provides a modernized replacement for the buggy VNC-based Termux
 Copy and paste the command below into your **Termux** app to begin the installation:
 
 ```bash
-pkg update -y && pkg install wget -y && wget https://raw.githubusercontent.com/rabbularafat/distro/main/termux11-xfce/install.sh && chmod +x install.sh && bash install.sh
+pkg update -y && pkg install curl -y && curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/termux11-xfce/install.sh -o install.sh && chmod +x install.sh && bash install.sh
 ```
 
 ---

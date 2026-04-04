@@ -31,7 +31,7 @@ echo "=========================================="
 echo "[1/5] Updating Termux packages..."
 pkg update -y && pkg upgrade -y
 pkg install x11-repo -y
-pkg install termux-x11-nightly proot-distro pulseaudio wget curl -y
+pkg install termux-x11-nightly proot-distro pulseaudio curl -y
 
 # 2. Install Debian (XFCE base) via proot-distro
 if ! proot-distro list | grep -q "debian.*installed"; then
