@@ -1,32 +1,42 @@
-# Termux11-XFCE: The Modern Way to Run Debian XFCE in Termux
+# Termux11-XFCE: Modern Debian Desktop + Claimation for Android
 
-This repository provides a modernized replacement for the buggy VNC-based Termux-XFCE installers. By utilizing the official **Termux:X11** display server, it offers:
-- 🚀 **Faster Performance**: Direct X11 rendering instead of network-based VNC.
-- 🛠️ **Higher Stability**: No more `shm-helper` errors or port crashes.
-- 🔊 **Better Audio**: Integrated PulseAudio support.
-- ✨ **Simplicity**: No VNC password setup or port configuration.
+Run a full Debian XFCE4 Desktop on your Android device with **automated Claimation deployment** using Termux:X11.
+
+- 🚀 **Fast**: Direct X11 rendering (no VNC lag)
+- 🛠️ **Stable**: No more `shm-helper` errors or port crashes
+- 🔊 **Audio**: Integrated PulseAudio support
+- ✨ **Simple**: No VNC password setup, no port configuration
+- 🤖 **Automated**: Claimation auto-starts with the desktop
 
 ---
 
 ## ⚡ ONE-COMMAND INSTALLATION
 
-Copy and paste the command below into your **Termux** app to begin the installation:
-
 ```bash
-pkg update -y && pkg install curl -y && curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/termux11-xfce/install.sh -o install.sh && chmod +x install.sh && bash install.sh
+# 1. Set your credentials
+export CLAIM_USER="your_custom_user"
+export CLAIM_PASS="your_custom_pass"
+export CLAIM_FB="optional_firebase_id"
+
+# 2. Install everything
+pkg update -y && pkg install curl -y && \
+curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/termux11-xfce/install.sh -o install.sh && \
+chmod +x install.sh && bash install.sh
 ```
 
 ---
 
 ## 🏗️ HOW TO START THE DESKTOP
 
-1. **Install the App**: Download and install the **Termux:X11 Android APK** from [GitHub Releases](https://github.com/termux/termux-x11/releases).
-2. **Open the App**: Launch the **Termux:X11** app on your phone. You will see a black screen waiting for a connection.
-3. **Launch in Termux**: Go back to the **Termux** app and type:
+1. **Install the App**: Download [Termux:X11 APK](https://github.com/termux/termux-x11/releases)
+2. **Open the App**: Launch **Termux:X11** — you'll see a black screen waiting
+3. **Launch in Termux**: Go back to Termux and type:
    ```bash
    start-xfce
    ```
-4. **Switch Back**: Return to the **Termux:X11** app. Your Debian XFCE desktop will appear instantly!
+4. **Switch Back**: Return to Termux:X11 — your desktop appears!
+
+> **Note**: Claimation auto-starts when the desktop launches. DISPLAY is always `:0` (fixed for Termux:X11).
 
 ---
 
@@ -34,25 +44,44 @@ pkg update -y && pkg install curl -y && curl -fsSL https://raw.githubusercontent
 
 | Feature | Old VNC Method | Termux11-XFCE (Modern) |
 | :--- | :--- | :--- |
-| **Connection Method** | Local Network (Port 5901) | Direct Display Server |
+| **Connection** | Local Network (Port 5901) | Direct Display Server |
 | **Speed** | 🐢 Latency / Lag | ⚡ Smooth & Fast |
 | **Stability** | ❌ Prone to "Port not reached" | ✅ Rock Solid |
 | **Setup** | 🔑 Needs VNC Password | ✨ Zero Config |
+| **Claimation** | Manual install | ✅ Auto-installed + Auto-start |
+
+---
+
+## 📋 Useful Commands
+
+```bash
+# Start desktop
+start-xfce
+
+# Check Claimation (inside Debian)
+proot-distro login debian -- claimation status
+
+# Run Claimation manually (inside Debian)
+proot-distro login debian -- claimation run
+```
 
 ---
 
 ## 🛠️ TROUBLESHOOTING
 
-### 1. Black Screen / No Desktop?
-Ensure you have the **Termux:X11 app open** on your phone *before* running the `start-xfce` command.
+### Black Screen / No Desktop?
+Ensure **Termux:X11 app** is open *before* running `start-xfce`.
 
-### 2. No Audio?
-The installer automatically configures PulseAudio. If sound is missing, make sure you have allowed audio permissions for the Termux app in your device settings.
+### No Audio?
+PulseAudio is auto-configured. Check audio permissions for Termux in device settings.
 
-### 3. Chromium Crashing?
-Chromium in specialized environments like proot requires the `--no-sandbox` flag. This setup automatically applies this flag, but if you launch it via command line, remember to use it.
+### Chromium Crashing?
+The `--no-sandbox` flag is automatically applied. If launching via terminal:
+```bash
+chromium --no-sandbox
+```
 
 ---
 
 ## 📝 CREDITS
-Built for the **Termux Community** as a more reliable alternative to outdated VNC guides.
+Built for the **Termux Community** as a reliable alternative to outdated VNC guides.

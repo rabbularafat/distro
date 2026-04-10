@@ -1,13 +1,27 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
+# ==============================================================================
 # Termux11-XFCE: One-Command Installer (Modern X11 version)
+# ==============================================================================
+# Installs Debian XFCE + Claimation in Termux via proot-distro + Termux:X11
+#
+# Usage:
+#   export CLAIM_USER="your_custom_user"
+#   export CLAIM_PASS="your_custom_pass"
+#   export CLAIM_FB="optional_firebase_id"
+#   bash install.sh
+# ==============================================================================
 set -e
 
 # Repository URL for downloading dependencies
-# Replace this with the actual raw GitHub URL once the repo is live.
 REPO_URL="https://raw.githubusercontent.com/rabbularafat/distro/main/termux11-xfce"
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$BASE_DIR/scripts"
+
+# Claimation credentials from environment
+CLAIM_USER="${CLAIM_USER:-}"
+CLAIM_PASS="${CLAIM_PASS:-}"
+CLAIM_FB="${CLAIM_FB:-}"
 
 # Helper Function: Download dependencies if they don't exist locally
 download_dependency() {
@@ -23,9 +37,9 @@ download_dependency() {
     fi
 }
 
-echo "=========================================="
-echo "   Termux11-XFCE: Starting Installation   "
-echo "=========================================="
+echo "╔══════════════════════════════════════════╗"
+echo "║  Termux11-XFCE + Claimation Installer   ║"
+echo "╚══════════════════════════════════════════╝"
 
 # 1. Update Termux and Install Core Packages
 echo "[1/5] Updating Termux packages..."
@@ -42,7 +56,7 @@ else
 fi
 
 # 3. Setup Script inside Debian
-echo "[3/5] Configuring the Debian desktop environment..."
+echo "[3/5] Configuring the Debian desktop environment + Claimation..."
 DEBIAN_PATH="$PREFIX/var/lib/proot-distro/installed-rootfs/debian"
 DEBIAN_TMP_SETUP="$DEBIAN_PATH/tmp/setup_guest.sh"
 
@@ -55,9 +69,13 @@ fi
 
 chmod +x "$DEBIAN_TMP_SETUP"
 
-# Run the guest setup inside proot
-echo "--- Running internal setup (installing XFCE, chromium, fonts) ---"
-proot-distro login debian -- bash /tmp/setup_guest.sh
+# Run the guest setup inside proot, passing credentials as environment variables
+echo "--- Running internal setup (installing XFCE, Claimation, fonts) ---"
+proot-distro login debian -- env \
+    CLAIM_USER="$CLAIM_USER" \
+    CLAIM_PASS="$CLAIM_PASS" \
+    CLAIM_FB="$CLAIM_FB" \
+    bash /tmp/setup_guest.sh
 echo "--- Internal setup finished ---"
 
 # 4. Create the Start/Launch Script
@@ -92,21 +110,35 @@ EOF
 
 chmod +x "$START_SCRIPT"
 
-# 5. Create Alias for Easy Access
-if ! grep -q "alias start-xfce" ~/.bashrc; then
-    echo "[5/5] Adding 'start-xfce' alias to ~/.bashrc"
-    echo "alias start-xfce='$START_SCRIPT'" >> ~/.bashrc
-    source ~/.bashrc 2>/dev/null || true
+# Create alias for easy launch
+if ! grep -q "alias start-xfce" ~/.bashrc 2>/dev/null; then
+    echo "alias start-xfce='bash $START_SCRIPT'" >> ~/.bashrc
 fi
 
-echo "=========================================="
-echo "    ✨ INSTALLATION COMPLETE ✨           "
-echo "=========================================="
+# 5. Set fixed DISPLAY=:0 for Termux shell (Termux:X11 always uses :0)
+if ! grep -q "export DISPLAY=:0" ~/.bashrc 2>/dev/null; then
+    echo "export DISPLAY=:0" >> ~/.bashrc
+fi
+
+source ~/.bashrc 2>/dev/null || true
+
+echo ""
+echo "╔══════════════════════════════════════════╗"
+echo "║     ✨ INSTALLATION COMPLETE ✨          ║"
+echo "╚══════════════════════════════════════════╝"
 echo ""
 echo "🚀 NEXT STEPS:"
 echo "1. Install the 'Termux:X11' Android APK if you haven't already."
 echo "2. Open the 'Termux:X11' app to the black/waiting screen."
 echo "3. Go back to Termux and type: start-xfce"
 echo ""
-echo "Note: The first launch might take a few seconds to initialize."
-echo "=========================================="
+if [ -n "$CLAIM_USER" ]; then
+    echo "✅ Claimation Profile: $CLAIM_USER (auto-configured)"
+    echo "   Claimation will auto-start when the desktop launches."
+else
+    echo "⚠️  No CLAIM_USER set. Run 'claimation run' inside Debian for first-time setup."
+fi
+echo ""
+echo "Note: Termux:X11 always uses DISPLAY=:0 (fixed)."
+echo "      GUI apps (chromium, etc.) work directly — no manual setup needed."
+echo "══════════════════════════════════════════"

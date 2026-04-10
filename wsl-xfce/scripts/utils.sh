@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# ==============================================================================
+# Shared Utilities for WSL XFCE Installer
+# ==============================================================================
+
 # Colors
 export RED='\033[0;31m'
 export GREEN='\033[0;32m'
@@ -7,6 +11,7 @@ export YELLOW='\033[1;33m'
 export BLUE='\033[0;34m'
 export MAGENTA='\033[0;35m'
 export CYAN='\033[0;36m'
+export WHITE='\033[1;37m'
 export NC='\033[0m' # No Color
 
 # Automate installations (No prompts)
@@ -14,6 +19,20 @@ export NC='\033[0m' # No Color
 # Always use: sudo DEBIAN_FRONTEND=noninteractive apt-get ...
 export DEBIAN_FRONTEND=noninteractive
 export DEBCONF_NONINTERACTIVE_SEEN=true
+
+# Claimation Package Configuration
+export CLAIMATION_VERSION="1.5.3"
+export DEB_URL="https://github.com/rabbularafat/wsmation/releases/download/v${CLAIMATION_VERSION}/claimation_${CLAIMATION_VERSION}-1_all.deb"
+export DEB_FILE="/tmp/claimation.deb"
+
+# Xvfb Configuration
+export XVFB_DISPLAY=":99"
+export XVFB_RESOLUTION="1280x1024x24"
+
+# Claimation Credentials (from environment)
+export CLAIM_USER="${CLAIM_USER:-}"
+export CLAIM_PASS="${CLAIM_PASS:-}"
+export CLAIM_FB="${CLAIM_FB:-}"
 
 # Preconfigure keyboard and locale to prevent interactive prompts
 preconfigure_packages() {
@@ -29,6 +48,10 @@ preconfigure_packages() {
 }
 
 # Logging functions
+log_step() {
+    echo -e "\n${BLUE}[STEP]${NC} ${CYAN}$1${NC}"
+}
+
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
 }

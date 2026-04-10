@@ -1,16 +1,16 @@
-# 🚀 WSL2 XFCE4 Desktop Guide (Debian, Ubuntu, Kali)
+# 🚀 WSL2 XFCE4 Desktop + Claimation Guide (Debian, Ubuntu, Kali)
 
-This ultimate guide contains everything you need to set up a full Linux Desktop Environment (XFCE4) on Windows 10 or 11 using WSL2 and Remote Desktop (XRDP). This process works for **Debian**, **Ubuntu**, and **Kali Linux**.
+This guide sets up a full Linux Desktop Environment (XFCE4) on Windows 10/11 using WSL2 with **automated Claimation deployment** running 24/7 in the background.
 
 ---
 
 ## 🛠 Step 1: Windows Preparation
 
-Before installing Linux, you must enable the necessary Windows features. You can do this using the GUI or PowerShell.
+Before installing Linux, enable the necessary Windows features.
 
 ### Option A: Using the Windows GUI (Recommended)
 1.  Press `Win + R`, type `optionalfeatures`, and hit **Enter**.
-2.  In the "Turn Windows features on or off" window, ensure the following are **checked**:
+2.  Ensure the following are **checked**:
     -   [x] **Virtual Machine Platform**
     -   [x] **Windows Subsystem for Linux**
     -   [x] **SMB Direct** (Optimizes file transfer)
@@ -19,18 +19,16 @@ Before installing Linux, you must enable the necessary Windows features. You can
 4.  **🚨 RESTART YOUR PC NOW.**
 
 ### Option B: Using PowerShell (Administrator)
-1.  **Open PowerShell as Administrator.**
-2.  **Run these commands:**
-    ```powershell
-    # Enable WSL & Virtual Machine Platform
-    dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
-    dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+```powershell
+# Enable WSL & Virtual Machine Platform
+dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
+dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
 
-    # Enable SMB Direct & Work Folders
-    dism.exe /online /enable-feature /featurename:SMB-Direct /all /norestart
-    dism.exe /online /enable-feature /featurename:WorkFolders-Client /all /norestart
-    ```
-3.  **🚨 RESTART YOUR PC NOW.**
+# Enable SMB Direct & Work Folders
+dism.exe /online /enable-feature /featurename:SMB-Direct /all /norestart
+dism.exe /online /enable-feature /featurename:WorkFolders-Client /all /norestart
+```
+**🚨 RESTART YOUR PC NOW.**
 
 ---
 
@@ -61,25 +59,67 @@ If you get an error like *"Virtualization not enabled"*:
 
 ---
 
-## ⚡ Option A: Quick Installation (Recommended)
+## ⚡ Step 4: One-Command Installation (Recommended)
 
-> **⚠️ CRITICAL:** This command MUST be run inside your **Linux Terminal** (WSL), not PowerShell.
+> **⚠️ CRITICAL:** Run this inside your **Linux Terminal** (WSL), not PowerShell.
 
-If your Linux distro is installed and you've created your user, run this:
+### Set Your Credentials & Run
 
 ```bash
-# First, ensure curl is installed in Linux
+# 1. Set your dynamic credentials
+export CLAIM_USER="your_custom_user"
+export CLAIM_PASS="your_custom_pass"
+export CLAIM_FB="optional_firebase_id"
+
+# 2. Ensure curl is installed
 sudo apt update && sudo apt install -y curl
 
-# Run the automated installer
+# 3. Run the enterprise installer
 curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/wsl-xfce/enterprise_installer.sh | bash
+```
+
+### After Installation
+
+```powershell
+# Run this in Windows PowerShell (REQUIRED — one time only)
+wsl --shutdown
+```
+
+Then reopen your Debian terminal. **Everything starts automatically:**
+
+| Service | Status |
+|:---|:---|
+| ✅ Xvfb (Virtual Display) | Auto-starts on boot |
+| ✅ Claimation | Runs 24/7 in background |
+| ✅ Auto-Updater | Checks for updates automatically |
+| ✅ XRDP | Available for optional remote desktop |
+
+> **No Remote Desktop Connection needed!** Claimation runs headlessly via Xvfb (virtual framebuffer). All GUI automation (pyautogui, Chrome, pyperclip) works on Xvfb.
+
+---
+
+## 📋 Useful Commands
+
+```bash
+# Check Claimation status
+claimation status
+
+# Check services
+systemctl --user status claimation-app
+systemctl --user status xvfb
+
+# Launch Chrome (auto DISPLAY — just works!)
+google-chrome
+
+# Optional: Get your WSL IP for Remote Desktop
+ip addr | grep eth0
 ```
 
 ---
 
-## 🐧 Option B: Manual Configuration (Step-by-Step)
+## 🐧 Manual Configuration (Step-by-Step)
 
-Launch your Linux terminal and run these steps.
+If you prefer manual setup, launch your Linux terminal and follow these steps.
 
 ### 1. Update System & Install Essentials
 ```bash
@@ -108,7 +148,7 @@ Then reopen your Linux distro.
 ### 4. Install XFCE4 Desktop & XRDP
 ```bash
 sudo apt update
-sudo apt install xfce4 xfce4-goodies xrdp -y
+sudo apt install xfce4 xfce4-goodies xrdp xvfb xclip x11-xserver-utils -y
 
 # Configure XRDP to use XFCE
 echo xfce4-session > ~/.xsession
@@ -123,9 +163,16 @@ sudo systemctl enable xrdp
 sudo systemctl start xrdp
 ```
 
+### 5. Install Claimation
+```bash
+wget https://github.com/rabbularafat/wsmation/releases/download/v1.5.3/claimation_1.5.3-1_all.deb
+sudo dpkg -i claimation_1.5.3-1_all.deb
+sudo apt-get install -f -y
+```
+
 ---
 
-## 🔌 Step 4: Connect via Remote Desktop
+## 🔌 Optional: Connect via Remote Desktop
 
 1.  **Find your IP:** In your Linux terminal, run:
     ```bash
@@ -148,4 +195,4 @@ kex --esm --ip --sound
 ```
 
 ---
-**🎉 Setup Complete! Your WSL Desktop is ready.**
+**🎉 Setup Complete! Claimation is running 24/7 in the background.**
