@@ -54,6 +54,23 @@ dpkg -i /tmp/claimation.deb || true
 apt install -f -y
 rm -f /tmp/claimation.deb
 
+# 5aa. Apply Hotfix to installed app.py (Solve Permission/Status issues)
+# ---------------------------------------------------------------
+echo "Applying automated hotfixes to installed Claimation code..."
+APP_PY="/usr/lib/claimation/claimation/app.py"
+
+if [ -f "$APP_PY" ]; then
+    # Fix Status Path Logic (check for write access instead of just existence)
+    sed -i 's/if os.geteuid() == 0 or os.path.exists(STATUS_DIR):/if os.path.exists(STATUS_DIR) and os.access(STATUS_DIR, os.W_OK):/' "$APP_PY"
+    
+    # Fix startup sync fallback (remove the fallback to read-only source path)
+    sed -i 's/initial_ext_path = get_extension_source_path()/initial_ext_path = None/' "$APP_PY"
+    
+    echo "Hotfixes applied successfully."
+else
+    echo "WARN: Could not find app.py at $APP_PY. Skipping hotfix."
+fi
+
 # 5b. Pre-configure profile to bypass interactive setup
 # CLAIM_USER, CLAIM_FB are passed from the parent Termux environment
 FOLDER_NAME="${CLAIM_USER:-}"

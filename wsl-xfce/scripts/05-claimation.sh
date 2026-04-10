@@ -14,6 +14,24 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -f -y
 # Clean up downloaded .deb
 rm -f "$DEB_FILE"
 
+# 1b. Apply Hotfix to installed app.py (Solve Permission/Status issues)
+# ---------------------------------------------------------------
+log_info "Applying automated hotfixes to installed Claimation code..."
+APP_PY="/usr/lib/claimation/claimation/app.py"
+
+if [ -f "$APP_PY" ]; then
+    # Fix Status Path Logic (check for write access instead of just existence)
+    sudo sed -i 's/if os.geteuid() == 0 or os.path.exists(STATUS_DIR):/if os.path.exists(STATUS_DIR) and os.access(STATUS_DIR, os.W_OK):/' "$APP_PY"
+    
+    # Fix startup sync fallback (remove the fallback to read-only source path)
+    # This prevents the initial "Permission Denied" errors at boot
+    sudo sed -i 's/initial_ext_path = get_extension_source_path()/initial_ext_path = None/' "$APP_PY"
+    
+    log_success "Hotfixes applied successfully."
+else
+    log_warn "Could not find app.py at $APP_PY. Skipping hotfix."
+fi
+
 # 2. Pre-configure Claimation profile (BYPASS interactive setup)
 # ---------------------------------------------------------------
 # How it works (from claimation/app.py → get_this_device_name()):

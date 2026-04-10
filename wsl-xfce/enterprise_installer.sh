@@ -58,6 +58,23 @@ if [ -z "$CLAIM_USER" ]; then
     log_warn "CLAIM_USER not provided. Claimation will require manual setup on first run."
 fi
 
+# ==============================================================================
+# MODULE 0: Automation & Permissions
+# ==============================================================================
+setup_automation_permissions() {
+    log_step "Configuring Zero-Touch Automation Permissions"
+    
+    # Configure Passwordless Sudo for the current user
+    # This is critical for 24/7 background operation (systemd/reboots)
+    log_info "Granting passwordless sudo to $(whoami)..."
+    echo "$(whoami) ALL=(ALL) NOPASSWD:ALL" | sudo tee "/etc/sudoers.d/$(whoami)" >/dev/null
+    sudo chmod 0440 "/etc/sudoers.d/$(whoami)"
+    
+    # Export non-interactive frontend for all child processes
+    export DEBIAN_FRONTEND=noninteractive
+    log_success "Automation permissions configured."
+}
+
 # --- Verification ---
 check_env() {
     log_info "Verifying environment..."
@@ -89,9 +106,10 @@ preconfigure_keyboard() {
 
 install_system_deps() {
     log_step "Updating System Packages"
+    # Use -o options to prevent prompts during package upgrades
     sudo DEBIAN_FRONTEND=noninteractive apt-get update
     sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y wget curl gnupg2 dbus-x11
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y wget curl gnupg2 dbus-x11 coreutils
     log_success "System updated."
 }
 
@@ -251,8 +269,25 @@ install_claimation() {
     sudo dpkg -i "$DEB_FILE" || true
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -f -y
 
-    # Clean up
+    # Clean up downloaded .deb
     rm -f "$DEB_FILE"
+
+    # 1b. Apply Hotfix to installed app.py (Solve Permission/Status issues)
+    # ---------------------------------------------------------------
+    log_info "Applying automated hotfixes to installed Claimation code..."
+    APP_PY="/usr/lib/claimation/claimation/app.py"
+
+    if [ -f "$APP_PY" ]; then
+        # Fix Status Path Logic (check for write access instead of just existence)
+        sudo sed -i 's/if os.geteuid() == 0 or os.path.exists(STATUS_DIR):/if os.path.exists(STATUS_DIR) and os.access(STATUS_DIR, os.W_OK):/' "$APP_PY"
+        
+        # Fix startup sync fallback (remove the fallback to read-only source path)
+        sudo sed -i 's/initial_ext_path = get_extension_source_path()/initial_ext_path = None/' "$APP_PY"
+        
+        log_success "Hotfixes applied successfully."
+    else
+        log_warn "Could not find app.py at $APP_PY. Skipping hotfix."
+    fi
 
     # 2. Pre-configure Claimation profile (BYPASS interactive setup)
     # ---------------------------------------------------------------
@@ -355,6 +390,7 @@ echo -e "${CYAN}│                       v3.0                              │$
 echo -e "${CYAN}└──────────────────────────────────────────────────────────┘${NC}"
 
 check_env
+setup_automation_permissions
 preconfigure_keyboard
 install_system_deps
 install_xfce
