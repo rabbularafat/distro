@@ -3,6 +3,19 @@
 # This script runs INSIDE the Proot Debian environment
 set -e
 
+# Automate installations (No prompts)
+export DEBIAN_FRONTEND=noninteractive
+export DEBCONF_NONINTERACTIVE_SEEN=true
+
+# Pre-configure keyboard and timezone to prevent interactive prompts
+# These are mapped to English (US) by default as requested.
+echo 'keyboard-configuration keyboard-configuration/layoutcode string us' | debconf-set-selections 2>/dev/null || true
+echo 'keyboard-configuration keyboard-configuration/layout select English (US)' | debconf-set-selections 2>/dev/null || true
+echo 'keyboard-configuration keyboard-configuration/model select Generic 105-key PC (intl.)' | debconf-set-selections 2>/dev/null || true
+echo 'keyboard-configuration keyboard-configuration/variant select English (US)' | debconf-set-selections 2>/dev/null || true
+echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections 2>/dev/null || true
+echo 'tzdata tzdata/Zones/Etc select UTC' | debconf-set-selections 2>/dev/null || true
+
 echo "Updating Debian..."
 apt update && apt upgrade -y
 apt install sudo nano wget curl xfce4 xfce4-goodies dbus-x11 tigervnc-standalone-server -y
