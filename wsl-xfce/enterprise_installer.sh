@@ -329,11 +329,16 @@ AUTOSTART_EOF
     log_info "Enabling user lingering for 24/7 operation..."
     sudo loginctl enable-linger "$(whoami)" 2>/dev/null || true
 
-    # 5. Pre-enable the systemd user service via symlink
+    # 5. Pre-enable services
     # (systemd might not be running yet — it starts after wsl --shutdown)
     mkdir -p ~/.config/systemd/user/default.target.wants
+    
+    # User-level app service
     ln -sf /usr/lib/systemd/user/claimation-app.service \
         ~/.config/systemd/user/default.target.wants/claimation-app.service 2>/dev/null || true
+    
+    # System-level updater service (requires sudo)
+    sudo systemctl enable claimation-updater.service 2>/dev/null || true
 
     log_success "Claimation installed and automated for 24/7 background operation."
 }

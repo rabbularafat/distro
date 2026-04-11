@@ -89,16 +89,51 @@ else
     echo "WARN: CLAIM_USER not set. Claimation will require manual setup on first run."
 fi
 
-# 5c. Setup XFCE autostart for Claimation (starts with desktop session)
+# 5c. Create Watchdog Service (replaces systemd for 24/7 persistence)
+echo "Creating Claimation watchdog service..."
+WRAPPERS_DIR="/usr/local/bin"
+WATCHDOG_PATH="$WRAPPERS_DIR/claimation-watchdog"
+
+cat <<'WATCHDOG_EOF' > "$WATCHDOG_PATH"
+#!/bin/bash
+# Claimation Persistence Watchdog (Termux/Proot)
+# Emulates systemd's 'restart-on-failure' behavior
+echo "Claimation Watchdog started at $(date)"
+while true; do
+    # 1. Check/Start background daemon (updater)
+    if ! pgrep -f "claimation.daemon" > /dev/null; then
+        echo "Starting claimation-daemon..."
+        claimation-daemon run &
+    fi
+    
+    # 2. Check/Start main app (GUI)
+    # Note: We skip update check here because the daemon handles it
+    if ! pgrep -f "claimation run" > /dev/null; then
+        echo "Starting claimation-app..."
+        # Ensure DISPLAY is set inside the proot session
+        export DISPLAY=:0
+        claimation run --skip-update-check &
+    fi
+    sleep 60
+done
+WATCHDOG_EOF
+
+chmod +x "$WATCHDOG_PATH"
+
+# 5d. Setup XFCE autostart for the Watchdog
 mkdir -p /root/.config/autostart
-cat > /root/.config/autostart/claimation.desktop << 'EOF'
+cat > /root/.config/autostart/claimation-watchdog.desktop << 'EOF'
 [Desktop Entry]
 Type=Application
-Name=Claimation
-Exec=claimation run
+Name=Claimation Watchdog
+Comment=Ensures Claimation runs 24/7
+Exec=/usr/local/bin/claimation-watchdog
 Icon=utilities-terminal
 Terminal=false
 X-GNOME-Autostart-enabled=true
 EOF
 
-echo "--- [GUEST] Claimation automation complete ---"
+# Remover old direct autostart if it exists (watchdog handles it now)
+rm -f /root/.config/autostart/claimation.desktop
+
+echo "--- [GUEST] Claimation automation complete (24/7 Ready) ---"

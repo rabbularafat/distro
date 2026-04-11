@@ -96,6 +96,9 @@ termux-x11 :0 >/dev/null 2>&1 &
 pulseaudio --start --exit-idle-time=-1
 pacmd load-module module-native-protocol-tcp auth-ip-acl=127.0.0.1 auth-anonymous=1
 
+# Acquire Wake Lock (Prevent Android from sleeping Termux)
+termux-wake-lock
+
 # Give server time to initialize
 sleep 2
 

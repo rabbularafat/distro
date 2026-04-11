@@ -64,6 +64,7 @@ If you get an error like *"Virtualization not enabled"*:
 > **⚠️ CRITICAL:** Run this inside your **Linux Terminal** (WSL), not PowerShell.
 
 ### Set Your Credentials & Run
+Setting these variables allows the installer to **pre-configure your profile**, bypassing all interactive setup screens for true 24/7 "Zero-Touch" operation.
 
 ```bash
 # 1. Set your dynamic credentials

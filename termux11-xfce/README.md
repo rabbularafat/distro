@@ -7,6 +7,8 @@ Run a full Debian XFCE4 Desktop on your Android device with **automated Claimati
 - 🔊 **Audio**: Integrated PulseAudio support
 - ✨ **Simple**: No VNC password setup, no port configuration
 - 🤖 **Automated**: Claimation auto-starts with the desktop
+- 🔄 **24/7 Ready**: Built-in **Watchdog** service restarts Claimation if it crashes
+- 🔋 **Persistence**: Includes `termux-wake-lock` to prevent Android from sleeping the process
 
 ---
 
@@ -36,7 +38,13 @@ chmod +x install.sh && bash install.sh
    ```
 4. **Switch Back**: Return to Termux:X11 — your desktop appears!
 
-> **Note**: Claimation auto-starts when the desktop launches. DISPLAY is always `:0` (fixed for Termux:X11).
+> **Note**: Claimation auto-starts when the desktop launches via a custom **Watchdog Service**. This service monitors the app and updates every 60 seconds.
+> 
+> ### 🔋 24/7 Pbackground Operation
+> To ensure Claimation runs without being killed by Android:
+> 1.  **Disable Battery Optimization**: Go to *Settings > Apps > Termux > Battery* and set to **"Unrestricted"**.
+> 2.  **Acquire Wakelock**: Pull down the Termux notification and tap **"Acquire Wakelock"** (The installer attempts to do this automatically, but doing it manually ensures persistence).
+> 3.  **Keep App Open**: Do not swipe Termux out of your recent apps list.
 
 ---
 
