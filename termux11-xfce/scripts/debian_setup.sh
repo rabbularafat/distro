@@ -45,13 +45,55 @@ echo "--- [GUEST] Environment configuration complete ---"
 # --- [CLAIMATION] Automated Installation & Setup ---
 echo "[5/5] Starting Claimation automation..."
 
-# 5a. Install Claimation .deb
+# 5a. Install Claimation .deb (with systemd bypass for proot)
 CLAIMATION_VERSION="1.5.3"
 DEB_URL="https://github.com/rabbularafat/wsmation/releases/download/v${CLAIMATION_VERSION}/claimation_${CLAIMATION_VERSION}-1_all.deb"
 
 wget -q --show-progress -O /tmp/claimation.deb "$DEB_URL"
-dpkg -i /tmp/claimation.deb || true
-apt install -f -y
+
+# In proot (Termux), systemd is unavailable. The claimation .deb post-install
+# script tries to run systemctl, which fails. We work around this by:
+# 1. Creating a fake systemctl that always succeeds
+# 2. Installing the package normally (post-install now harmlessly no-ops)
+# 3. Removing the fake systemctl after installation
+
+FAKE_SYSTEMCTL=false
+if ! pidof systemd > /dev/null 2>&1; then
+    echo "Detected non-systemd environment (proot). Installing systemctl shim..."
+    FAKE_SYSTEMCTL=true
+    # Back up real systemctl if it exists
+    if [ -f /usr/bin/systemctl ]; then
+        mv /usr/bin/systemctl /usr/bin/systemctl.real
+    fi
+    # Create a no-op systemctl that always succeeds
+    cat > /usr/bin/systemctl << 'SHIM_EOF'
+#!/bin/bash
+# Fake systemctl shim for proot environments (no systemd)
+exit 0
+SHIM_EOF
+    chmod +x /usr/bin/systemctl
+fi
+
+if [ "$FAKE_SYSTEMCTL" = true ]; then
+    # In proot, also skip triggers during install (setpriv fails in proot)
+    dpkg --no-triggers -i /tmp/claimation.deb || true
+    apt install --fix-broken -y || true
+    dpkg --configure --pending || true
+else
+    dpkg -i /tmp/claimation.deb || true
+    apt install -f -y
+fi
+
+# Restore real systemctl or remove shim
+if [ "$FAKE_SYSTEMCTL" = true ]; then
+    if [ -f /usr/bin/systemctl.real ]; then
+        mv /usr/bin/systemctl.real /usr/bin/systemctl
+    else
+        rm -f /usr/bin/systemctl
+    fi
+    echo "Systemctl shim removed."
+fi
+
 rm -f /tmp/claimation.deb
 
 # 5aa. Apply Hotfix to installed app.py (Solve Permission/Status issues)
