@@ -38,6 +38,18 @@ chmod +x install.sh && bash install.sh
    ```
 4. **Switch Back**: Return to Termux:X11 — your desktop appears!
 
+---
+
+## ⚡ CRITICAL: ACTIVATION after install
+The persistence layer requires a **single restart** of the Termux app to activate:
+
+1. **CLOSE Termux**: Swipe the app away from your Recent Apps.
+2. **REOPEN Termux**: Open the app again.
+3. **WAIT 30s**: Give the background watchdog a moment to initialize.
+4. **VERIFY**: Type `proot-distro login debian -- claimation status`. It should now show **🟢 RUNNING**.
+
+---
+
 > **Note**: Claimation runs 24/7 via a **3-layer persistence** system:
 > 
 > | Layer | Trigger | What it does |
