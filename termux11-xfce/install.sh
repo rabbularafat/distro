@@ -123,6 +123,50 @@ if ! grep -q "export DISPLAY=:0" ~/.bashrc 2>/dev/null; then
     echo "export DISPLAY=:0" >> ~/.bashrc
 fi
 
+# 6. Auto-start Claimation watchdog when opening ANY Termux session
+# (Belt-and-suspenders: even without start-xfce, claimation stays alive)
+if ! grep -q "claimation-autostart" ~/.bashrc 2>/dev/null; then
+    cat >> ~/.bashrc << 'TERMUX_BASHRC_EOF'
+
+# claimation-autostart: Auto-launch watchdog inside proot on every Termux session
+# The watchdog itself prevents duplicate instances, so this is safe to call repeatedly.
+_claimation_ensure_running() {
+    # Check if the watchdog is already running inside proot
+    if ! proot-distro login debian -- pgrep -f "claimation-watchdog" > /dev/null 2>&1; then
+        echo "🔄 Starting Claimation watchdog..."
+        proot-distro login debian --shared-tmp -- bash -c "export DISPLAY=:0; nohup /usr/local/bin/claimation-watchdog > /dev/null 2>&1 &" &
+        disown
+    fi
+}
+_claimation_ensure_running
+TERMUX_BASHRC_EOF
+    echo "Termux auto-start hook added to Termux .bashrc"
+fi
+
+# 7. Setup Termux:Boot for phone-reboot persistence
+# If Termux:Boot is installed, create a boot script that auto-starts
+# the proot watchdog when the phone reboots.
+BOOT_DIR="$HOME/.termux/boot"
+mkdir -p "$BOOT_DIR"
+
+cat > "$BOOT_DIR/claimation-start.sh" << 'BOOT_EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+# Claimation Termux:Boot Auto-Start
+# Runs on phone boot if Termux:Boot app is installed.
+
+# Acquire wake lock to prevent Android from killing Termux
+termux-wake-lock
+
+# Wait a moment for system to stabilize
+sleep 10
+
+# Start the watchdog inside Debian proot (headless, no desktop needed)
+proot-distro login debian --shared-tmp -- bash -c "export DISPLAY=:0; nohup /usr/local/bin/claimation-watchdog > /dev/null 2>&1 &"
+BOOT_EOF
+
+chmod +x "$BOOT_DIR/claimation-start.sh"
+echo "Termux:Boot script created at $BOOT_DIR/claimation-start.sh"
+
 source ~/.bashrc 2>/dev/null || true
 
 echo ""
@@ -135,12 +179,22 @@ echo "1. Install the 'Termux:X11' Android APK if you haven't already."
 echo "2. Open the 'Termux:X11' app to the black/waiting screen."
 echo "3. Go back to Termux and type: start-xfce"
 echo ""
+echo "🔒 24/7 PERSISTENCE:"
+echo "  ✓ Watchdog auto-starts on every Termux session"
+echo "  ✓ Watchdog auto-starts on phone boot (Termux:Boot)"
+echo "  ✓ Watchdog auto-starts inside proot login"
+echo "  ✓ Watchdog auto-restarts claimation if it crashes"
+echo ""
 if [ -n "$CLAIM_USER" ]; then
     echo "✅ Claimation Profile: $CLAIM_USER (auto-configured)"
     echo "   Claimation will auto-start when the desktop launches."
 else
     echo "⚠️  No CLAIM_USER set. Run 'claimation run' inside Debian for first-time setup."
 fi
+echo ""
+echo "📋 INSTALL Termux:Boot for phone-reboot persistence:"
+echo "   pkg install termux-boot"
+echo "   (Then open Termux:Boot app once to enable it)"
 echo ""
 echo "Note: Termux:X11 always uses DISPLAY=:0 (fixed)."
 echo "      GUI apps (chromium, etc.) work directly — no manual setup needed."

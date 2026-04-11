@@ -135,26 +135,52 @@ fi
 echo "Creating Claimation watchdog service..."
 WRAPPERS_DIR="/usr/local/bin"
 WATCHDOG_PATH="$WRAPPERS_DIR/claimation-watchdog"
+WATCHDOG_PID_FILE="/tmp/claimation-watchdog.pid"
 
 cat <<'WATCHDOG_EOF' > "$WATCHDOG_PATH"
 #!/bin/bash
 # Claimation Persistence Watchdog (Termux/Proot)
 # Emulates systemd's 'restart-on-failure' behavior
-echo "Claimation Watchdog started at $(date)"
+# This script runs as a background daemon and keeps claimation alive 24/7.
+
+PIDFILE="/tmp/claimation-watchdog.pid"
+LOGFILE="/tmp/claimation-watchdog.log"
+
+# Prevent duplicate watchdog instances
+if [ -f "$PIDFILE" ]; then
+    OLD_PID=$(cat "$PIDFILE" 2>/dev/null)
+    if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+        echo "Watchdog already running (PID $OLD_PID). Skipping."
+        exit 0
+    fi
+fi
+
+# Write our PID
+echo $$ > "$PIDFILE"
+
+echo "Claimation Watchdog started at $(date)" | tee -a "$LOGFILE"
+
+cleanup() {
+    rm -f "$PIDFILE"
+    echo "Watchdog stopped at $(date)" >> "$LOGFILE"
+    exit 0
+}
+trap cleanup EXIT INT TERM
+
 while true; do
     # 1. Check/Start background daemon (updater)
-    if ! pgrep -f "claimation.daemon" > /dev/null; then
-        echo "Starting claimation-daemon..."
-        claimation-daemon run &
+    if ! pgrep -f "claimation.daemon" > /dev/null 2>&1; then
+        echo "[$(date)] Starting claimation-daemon..." >> "$LOGFILE"
+        claimation-daemon run >> "$LOGFILE" 2>&1 &
     fi
     
-    # 2. Check/Start main app (GUI)
+    # 2. Check/Start main app
     # Note: We skip update check here because the daemon handles it
-    if ! pgrep -f "claimation run" > /dev/null; then
-        echo "Starting claimation-app..."
-        # Ensure DISPLAY is set inside the proot session
+    if ! pgrep -f "claimation run" > /dev/null 2>&1; then
+        echo "[$(date)] Starting claimation-app..." >> "$LOGFILE"
+        # Ensure DISPLAY is set (use Termux:X11 display :0 if available)
         export DISPLAY=:0
-        claimation run --skip-update-check &
+        claimation run --skip-update-check >> "$LOGFILE" 2>&1 &
     fi
     sleep 60
 done
@@ -162,7 +188,21 @@ WATCHDOG_EOF
 
 chmod +x "$WATCHDOG_PATH"
 
-# 5d. Setup XFCE autostart for the Watchdog
+# 5d. Auto-start watchdog on EVERY proot login (not just XFCE desktop)
+# This is the critical fix: .bashrc runs on every `proot-distro login debian`,
+# so the watchdog starts whether or not you launch the XFCE desktop.
+if ! grep -q "claimation-watchdog" /root/.bashrc 2>/dev/null; then
+    cat >> /root/.bashrc << 'BASHRC_WATCHDOG_EOF'
+
+# Claimation 24/7 Watchdog Auto-Start
+# Automatically starts the watchdog in the background on every login.
+# The watchdog prevents duplicate instances via PID file.
+(nohup /usr/local/bin/claimation-watchdog > /dev/null 2>&1 &)
+BASHRC_WATCHDOG_EOF
+    echo "Watchdog auto-start added to .bashrc"
+fi
+
+# 5e. Also keep XFCE autostart for desktop sessions (belt and suspenders)
 mkdir -p /root/.config/autostart
 cat > /root/.config/autostart/claimation-watchdog.desktop << 'EOF'
 [Desktop Entry]
@@ -175,7 +215,7 @@ Terminal=false
 X-GNOME-Autostart-enabled=true
 EOF
 
-# Remover old direct autostart if it exists (watchdog handles it now)
+# Remove old direct autostart if it exists (watchdog handles it now)
 rm -f /root/.config/autostart/claimation.desktop
 
 echo "--- [GUEST] Claimation automation complete (24/7 Ready) ---"

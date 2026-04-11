@@ -38,13 +38,21 @@ chmod +x install.sh && bash install.sh
    ```
 4. **Switch Back**: Return to Termux:X11 — your desktop appears!
 
-> **Note**: Claimation auto-starts when the desktop launches via a custom **Watchdog Service**. This service monitors the app and updates every 60 seconds.
+> **Note**: Claimation runs 24/7 via a **3-layer persistence** system:
 > 
-> ### 🔋 24/7 Pbackground Operation
+> | Layer | Trigger | What it does |
+> | :--- | :--- | :--- |
+> | **Termux .bashrc** | Opening any Termux session | Auto-starts watchdog inside proot |
+> | **Proot .bashrc** | `proot-distro login debian` | Auto-starts watchdog on login |
+> | **Termux:Boot** | Phone reboot | Auto-starts watchdog + wake-lock |
+> | **XFCE Autostart** | Starting desktop | Starts watchdog (legacy fallback) |
+> 
+> ### 🔋 24/7 Background Operation
 > To ensure Claimation runs without being killed by Android:
-> 1.  **Disable Battery Optimization**: Go to *Settings > Apps > Termux > Battery* and set to **"Unrestricted"**.
-> 2.  **Acquire Wakelock**: Pull down the Termux notification and tap **"Acquire Wakelock"** (The installer attempts to do this automatically, but doing it manually ensures persistence).
-> 3.  **Keep App Open**: Do not swipe Termux out of your recent apps list.
+> 1.  **Install Termux:Boot**: `pkg install termux-boot` (then open Termux:Boot app once)
+> 2.  **Disable Battery Optimization**: Go to *Settings > Apps > Termux > Battery* and set to **"Unrestricted"**
+> 3.  **Acquire Wakelock**: Pull down the Termux notification and tap **"Acquire Wakelock"**
+> 4.  **Keep App Open**: Do not swipe Termux out of your recent apps list
 
 ---
 
