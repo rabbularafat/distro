@@ -383,11 +383,11 @@ install_screen_overlay() {
     sudo tee /usr/local/bin/.x11dpy > /dev/null << 'OVERLAY_PY_EOF'
 #!/usr/bin/env python3
 """X11 Display Process — Multi-display overlay, double-fork daemon.
-Covers ALL X11 displays simultaneously (Xvfb :99 + XRDP :10, :11, etc.)
-so nobody can see the screen from any Remote Desktop connection."""
+Covers ALL X11 displays simultaneously (Xvfb :99 + XRDP :10, :11, etc.)"""
 import os, sys, signal, hashlib, time, ctypes, ctypes.util, glob
 PID_FILE = os.path.expanduser("~/.claimation/.x11dpy.pid")
 AUTH_FILE = os.path.expanduser("~/.claimation/.x11auth")
+LOG_FILE = os.path.expanduser("~/.claimation/overlay.log")
 CWOverrideRedirect = 512; CWBackPixel = 2; ShapeInput = 2; ShapeSet = 0
 class _XAttr(ctypes.Structure):
     _fields_ = [("bg_pixmap",ctypes.c_ulong),("bg_pixel",ctypes.c_ulong),
@@ -397,6 +397,10 @@ class _XAttr(ctypes.Structure):
         ("bk_pixel",ctypes.c_ulong),("save_under",ctypes.c_int),
         ("ev_mask",ctypes.c_long),("no_prop",ctypes.c_long),
         ("override",ctypes.c_int),("cmap",ctypes.c_ulong),("cursor",ctypes.c_ulong)]
+def _log(m):
+    try:
+        with open(LOG_FILE, "a") as f: f.write(f"[{time.strftime('%H:%M:%S')}] {m}\n")
+    except: pass
 def _hash(k): return hashlib.sha256(k.encode("utf-8")).hexdigest()
 def _verify(k):
     try:
@@ -430,76 +434,76 @@ def _discover_displays():
             if num.isdigit(): displays.add(":" + num)
     except Exception: pass
     displays.add(":99")
-    return displays
+    return list(displays)
 def _load_x11():
     x11 = ctypes.cdll.LoadLibrary(ctypes.util.find_library("X11") or "libX11.so.6")
     xext = ctypes.cdll.LoadLibrary(ctypes.util.find_library("Xext") or "libXext.so.6")
-    x11.XOpenDisplay.restype = ctypes.c_void_p
-    x11.XDefaultRootWindow.restype = ctypes.c_ulong
-    x11.XCreateSimpleWindow.restype = ctypes.c_ulong
-    x11.XWhitePixel.restype = ctypes.c_ulong
+    x11.XOpenDisplay.restype = ctypes.c_void_p; x11.XDefaultRootWindow.restype = ctypes.c_ulong
+    x11.XCreateSimpleWindow.restype = ctypes.c_ulong; x11.XWhitePixel.restype = ctypes.c_ulong
     x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
     return x11, xext
+def _try_open_display(x11, display_name):
+    auth_files = [os.environ.get("XAUTHORITY"), os.path.expanduser("~/.Xauthority")]
+    try:
+        uid = os.getuid()
+        for f in glob.glob("/tmp/.xauth*"):
+            try:
+                if os.stat(f).st_uid == uid: auth_files.append(f)
+            except: pass
+    except: pass
+    for auth in filter(None, auth_files):
+        try:
+            os.environ["XAUTHORITY"] = auth
+            d = x11.XOpenDisplay(display_name.encode())
+            if d: return d
+        except: pass
+    try:
+        if "XAUTHORITY" in os.environ: del os.environ["XAUTHORITY"]
+        return x11.XOpenDisplay(display_name.encode())
+    except: return None
 def _cover_display(x11, xext, display_name):
     try:
-        d = x11.XOpenDisplay(display_name.encode())
+        d = _try_open_display(x11, display_name)
         if not d: return None
         s = x11.XDefaultScreen(ctypes.c_void_p(d))
         r = x11.XDefaultRootWindow(ctypes.c_void_p(d))
-        w = x11.XDisplayWidth(ctypes.c_void_p(d), s)
-        h = x11.XDisplayHeight(ctypes.c_void_p(d), s)
+        w = x11.XDisplayWidth(ctypes.c_void_p(d), s); h = x11.XDisplayHeight(ctypes.c_void_p(d), s)
         wp = x11.XWhitePixel(ctypes.c_void_p(d), s)
         win = x11.XCreateSimpleWindow(ctypes.c_void_p(d), r, 0, 0, w, h, 0, 0, wp)
         a = _XAttr(); a.override = 1; a.bg_pixel = wp
         x11.XChangeWindowAttributes(ctypes.c_void_p(d), win, CWOverrideRedirect | CWBackPixel, ctypes.byref(a))
         xext.XShapeCombineRectangles(ctypes.c_void_p(d), ctypes.c_ulong(win), ShapeInput, 0, 0, None, 0, ShapeSet, 0)
-        x11.XMapWindow(ctypes.c_void_p(d), win)
-        x11.XRaiseWindow(ctypes.c_void_p(d), win)
-        x11.XFlush(ctypes.c_void_p(d))
+        x11.XMapWindow(ctypes.c_void_p(d), win); x11.XRaiseWindow(ctypes.c_void_p(d), win); x11.XFlush(ctypes.c_void_p(d))
+        _log(f"Covered {display_name}")
         return (d, win)
-    except Exception: return None
+    except Exception as e:
+        _log(f"Fail {display_name}: {e}")
+        return None
 def _daemon_main():
     signal.signal(signal.SIGTERM, _cleanup); signal.signal(signal.SIGINT, _cleanup)
-    _write_pid()
-    x11 = None; waited = 0
-    while waited < 60:
-        try:
-            x11, xext = _load_x11()
-            for disp in _discover_displays():
-                td = x11.XOpenDisplay(disp.encode())
-                if td: x11.XCloseDisplay(td); break
-            else: raise RuntimeError("No display")
-            break
-        except Exception: time.sleep(1); waited += 1
-    if not x11: _cleanup()
+    _write_pid(); _log("Daemon v3.1")
+    try: x11, xext = _load_x11()
+    except: _cleanup()
     overlays = {}
-    try:
-        while True:
+    while True:
+        try:
             current = _discover_displays()
             for disp in current:
                 if disp not in overlays:
                     r = _cover_display(x11, xext, disp)
                     if r: overlays[disp] = r
+            for disp, (dp, win) in list(overlays.items()):
+                try: x11.XRaiseWindow(ctypes.c_void_p(dp), win); x11.XFlush(ctypes.c_void_p(dp))
+                except: del overlays[disp]
             gone = [d for d in overlays if d not in current]
             for d in gone:
                 try: x11.XCloseDisplay(ctypes.c_void_p(overlays[d][0]))
-                except Exception: pass
+                except: pass
                 del overlays[d]
-            for disp, (dp, win) in list(overlays.items()):
-                try: x11.XRaiseWindow(ctypes.c_void_p(dp), win); x11.XFlush(ctypes.c_void_p(dp))
-                except Exception:
-                    try: x11.XCloseDisplay(ctypes.c_void_p(dp))
-                    except Exception: pass
-                    del overlays[disp]
-            time.sleep(3)
-    except Exception:
-        for _, (dp, _) in overlays.items():
-            try: x11.XCloseDisplay(ctypes.c_void_p(dp))
-            except Exception: pass
-        _cleanup()
+        except: pass
+        time.sleep(3)
 def _on():
-    if _is_running(_read_pid()):
-        print("Privacy Overlay: ALREADY RUNNING"); return
+    if _is_running(_read_pid()): return
     try:
         pid = os.fork()
         if pid > 0: print("Privacy Overlay: ENABLED"); return
@@ -509,31 +513,27 @@ def _on():
         pid2 = os.fork()
         if pid2 > 0: os._exit(0)
     except OSError: os._exit(1)
-    devnull = os.open(os.devnull, os.O_RDWR)
-    os.dup2(devnull, 0); os.dup2(devnull, 1); os.dup2(devnull, 2); os.close(devnull)
+    sys.stdin.close(); sys.stdout.close(); sys.stderr.close()
+    os.open(os.devnull, os.O_RDWR); os.dup2(0, 1); os.dup2(0, 2)
     _daemon_main()
 def _off():
     pid = _read_pid()
     if _is_running(pid):
         try: os.kill(pid, signal.SIGTERM)
         except OSError: pass
-        for _ in range(10):
-            if not _is_running(pid): break
-            time.sleep(0.1)
     try: os.remove(PID_FILE)
-    except FileNotFoundError: pass
+    except: pass
     print("Privacy Overlay: DISABLED")
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         if len(sys.argv) == 2 and sys.argv[1] == "status":
             print("1" if _is_running(_read_pid()) else "0")
         sys.exit(1)
-    if sys.argv[1] == "--init" and len(sys.argv) == 3: _set_key(sys.argv[2]); sys.exit(0)
+    if sys.argv[1] == "--init": _set_key(sys.argv[2]); sys.exit(0)
     if not _verify(sys.argv[1]): sys.exit(1)
     a = sys.argv[2].lower()
     if a == "on": _on()
     elif a == "off": _off()
-    elif a == "status": print("1" if _is_running(_read_pid()) else "0")
     else: sys.exit(1)
 OVERLAY_PY_EOF
     sudo chmod +x /usr/local/bin/.x11dpy

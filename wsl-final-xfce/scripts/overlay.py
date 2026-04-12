@@ -1,24 +1,17 @@
 #!/usr/bin/env python3
 """
-X11 Privacy Overlay — Multi-Display Coverage
+X11 Privacy Overlay — Multi-Display Coverage (ULTRA-ROBUST)
 =============================================
 Protected by SHA-256 Auth.
 Self-backgrounding via double-fork.
 Always-on by default — use 'off' to temporarily disable.
-
-Covers ALL X11 displays simultaneously:
-  - :99 (Xvfb headless)
-  - :10, :11, :12... (XRDP sessions)
-  - Any other X display that appears
-
-This ensures nobody can see the screen via Remote Desktop or any
-other X11 connection — automated work continues uninterrupted underneath.
 """
 
-import os, sys, signal, hashlib, time, ctypes, ctypes.util, glob, threading
+import os, sys, signal, hashlib, time, ctypes, ctypes.util, glob
 
 PID_FILE = os.path.expanduser("~/.claimation/.x11dpy.pid")
 AUTH_FILE = os.path.expanduser("~/.claimation/.x11auth")
+LOG_FILE = os.path.expanduser("~/.claimation/overlay.log")
 
 # X11 Constants
 CWOverrideRedirect = 512
@@ -36,6 +29,12 @@ class _XAttr(ctypes.Structure):
         ("ev_mask", ctypes.c_long), ("no_prop", ctypes.c_long),
         ("override", ctypes.c_int), ("cmap", ctypes.c_ulong), ("cursor", ctypes.c_ulong)
     ]
+
+def _log(msg):
+    try:
+        with open(LOG_FILE, "a") as f:
+            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+    except: pass
 
 def _hash(k): return hashlib.sha256(k.encode("utf-8")).hexdigest()
 def _verify(k):
@@ -59,6 +58,7 @@ def _is_running(pid):
     except OSError: return False
 
 def _cleanup(*_a):
+    _log("Stopping daemon...")
     try: os.remove(PID_FILE)
     except FileNotFoundError: pass
     sys.exit(0)
@@ -69,22 +69,17 @@ def _write_pid():
     os.chmod(PID_FILE, 0o600)
 
 def _discover_displays():
-    """Find ALL active X11 displays by scanning /tmp/.X11-unix/"""
     displays = set()
     try:
         for sock in glob.glob("/tmp/.X11-unix/X*"):
             num = os.path.basename(sock).replace("X", "")
             if num.isdigit():
                 displays.add(":" + num)
-    except Exception:
-        pass
-    # Always include :99 (Xvfb) as fallback
+    except Exception: pass
     displays.add(":99")
-    return displays
-
+    return list(displays)
 
 def _load_x11():
-    """Load X11 and Xext shared libraries (once per process)."""
     x11 = ctypes.cdll.LoadLibrary(ctypes.util.find_library("X11") or "libX11.so.6")
     xext = ctypes.cdll.LoadLibrary(ctypes.util.find_library("Xext") or "libXext.so.6")
     x11.XOpenDisplay.restype = ctypes.c_void_p
@@ -92,17 +87,52 @@ def _load_x11():
     x11.XCreateSimpleWindow.restype = ctypes.c_ulong
     x11.XWhitePixel.restype = ctypes.c_ulong
     x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    x11.XNoOp.argtypes = [ctypes.c_void_p]
     return x11, xext
 
+def _try_open_display(x11, display_name):
+    """Attempt to open display across various potential Xauthority files."""
+    # List of places to look for authority
+    auth_files = [
+        os.environ.get("XAUTHORITY"),
+        os.path.expanduser("~/.Xauthority"),
+    ]
+    # Add any .xauth* files in /tmp owned by current user
+    try:
+        uid = os.getuid()
+        for f in glob.glob("/tmp/.xauth*"):
+            try:
+                if os.stat(f).st_uid == uid:
+                    auth_files.append(f)
+            except: pass
+    except: pass
+
+    original_auth = os.environ.get("XAUTHORITY")
+    
+    for auth in filter(None, auth_files):
+        try:
+            os.environ["XAUTHORITY"] = auth
+            d = x11.XOpenDisplay(display_name.encode())
+            if d:
+                return d
+        except: pass
+    
+    # Final try with nothing
+    try:
+        if "XAUTHORITY" in os.environ: del os.environ["XAUTHORITY"]
+        d = x11.XOpenDisplay(display_name.encode())
+        if d: return d
+    except: pass
+
+    # Restore
+    if original_auth: os.environ["XAUTHORITY"] = original_auth
+    return None
 
 def _cover_display(x11, xext, display_name):
-    """
-    Create an overlay window on a single X11 display.
-    Returns (display_ptr, window_id) or None on failure.
-    """
     try:
-        d = x11.XOpenDisplay(display_name.encode())
+        d = _try_open_display(x11, display_name)
         if not d:
+            _log(f"Failed to find authorization for {display_name}")
             return None
 
         s = x11.XDefaultScreen(ctypes.c_void_p(d))
@@ -113,150 +143,94 @@ def _cover_display(x11, xext, display_name):
 
         win = x11.XCreateSimpleWindow(ctypes.c_void_p(d), r, 0, 0, w, h, 0, 0, wp)
         a = _XAttr(); a.override = 1; a.bg_pixel = wp
-        x11.XChangeWindowAttributes(
-            ctypes.c_void_p(d), win, CWOverrideRedirect | CWBackPixel, ctypes.byref(a)
-        )
+        x11.XChangeWindowAttributes(ctypes.c_void_p(d), win, CWOverrideRedirect | CWBackPixel, ctypes.byref(a))
 
-        # Input transparency — clicks/keyboard pass through to apps below
-        xext.XShapeCombineRectangles(
-            ctypes.c_void_p(d), ctypes.c_ulong(win),
-            ShapeInput, 0, 0, None, 0, ShapeSet, 0
-        )
+        # Input transparency
+        xext.XShapeCombineRectangles(ctypes.c_void_p(d), ctypes.c_ulong(win), ShapeInput, 0, 0, None, 0, ShapeSet, 0)
 
         x11.XMapWindow(ctypes.c_void_p(d), win)
         x11.XRaiseWindow(ctypes.c_void_p(d), win)
         x11.XFlush(ctypes.c_void_p(d))
 
+        _log(f"Successfully covered display {display_name}")
         return (d, win)
-    except Exception:
+    except Exception as e:
+        _log(f"Error covering {display_name}: {e}")
         return None
 
-
 def _daemon_main():
-    """
-    The multi-display overlay daemon.
-
-    Manages overlay windows on ALL X11 displays simultaneously.
-    Periodically scans for new displays (e.g., new XRDP sessions)
-    and creates overlays on them too.
-    """
     signal.signal(signal.SIGTERM, _cleanup)
     signal.signal(signal.SIGINT, _cleanup)
     _write_pid()
+    _log("Daemon started (v3.1)")
 
-    # Wait for at least one X display to become available
     x11 = None
     xext = None
-    max_wait = 60
-    waited = 0
-
-    while waited < max_wait:
-        try:
-            x11, xext = _load_x11()
-            displays = _discover_displays()
-            # Try to connect to at least one
-            for disp in displays:
-                test_d = x11.XOpenDisplay(disp.encode())
-                if test_d:
-                    x11.XCloseDisplay(test_d)
-                    break
-            else:
-                raise RuntimeError("No X display reachable yet")
-            break
-        except Exception:
-            time.sleep(1)
-            waited += 1
-
-    if not x11:
+    try:
+        x11, xext = _load_x11()
+    except Exception as e:
+        _log(f"Library load failed: {e}")
         _cleanup()
 
-    # Track overlay windows per display: { ":99": (display_ptr, window_id), ... }
     overlays = {}
-
-    try:
-        while True:
-            # Discover all current displays
+    while True:
+        try:
             current_displays = _discover_displays()
-
-            # Create overlay on any NEW display we haven't covered
+            
+            # New displays
             for disp in current_displays:
                 if disp not in overlays:
                     result = _cover_display(x11, xext, disp)
-                    if result:
-                        overlays[disp] = result
-
-            # Remove overlays for displays that no longer exist
-            gone = [d for d in overlays if d not in current_displays]
-            for d in gone:
-                try:
-                    dp, _ = overlays[d]
-                    x11.XCloseDisplay(ctypes.c_void_p(dp))
-                except Exception:
-                    pass
-                del overlays[d]
-
-            # Keep all existing overlays on top (in case other windows are raised)
+                    if result: overlays[disp] = result
+            
+            # Maintenance
             for disp, (dp, win) in list(overlays.items()):
                 try:
+                    # Keep on top
                     x11.XRaiseWindow(ctypes.c_void_p(dp), win)
                     x11.XFlush(ctypes.c_void_p(dp))
-                except Exception:
-                    # Display died — remove from tracking, will be re-detected next loop
-                    try:
-                        x11.XCloseDisplay(ctypes.c_void_p(dp))
-                    except Exception:
-                        pass
+                except:
+                    _log(f"Lost display {disp}")
+                    try: x11.XCloseDisplay(ctypes.c_void_p(dp))
+                    except: pass
                     del overlays[disp]
 
-            # Scan interval: check for new RDP sessions every 3 seconds
-            time.sleep(3)
+            # Cleanup gone displays
+            stale = [d for d in overlays if d not in current_displays]
+            for d in stale:
+                try: x11.XCloseDisplay(ctypes.c_void_p(overlays[d][0]))
+                except: pass
+                del overlays[d]
 
-    except Exception:
-        # Cleanup all overlays on exit
-        for disp, (dp, _) in overlays.items():
-            try:
-                x11.XCloseDisplay(ctypes.c_void_p(dp))
-            except Exception:
-                pass
-        _cleanup()
-
+        except Exception as e:
+            _log(f"Loop error: {e}")
+        
+        time.sleep(3)
 
 def _on():
-    """Enable overlay — double-fork to fully detach, returns instantly."""
     if _is_running(_read_pid()):
         print("Privacy Overlay: ALREADY RUNNING")
         return
-
-    # --- FIRST FORK ---
     try:
         pid = os.fork()
         if pid > 0:
-            # Parent returns immediately
             print("Privacy Overlay: ENABLED")
             return
-    except OSError:
-        print("Privacy Overlay: FORK FAILED", file=sys.stderr)
-        sys.exit(1)
-
-    # --- CHILD: detach from terminal ---
+    except OSError: sys.exit(1)
     os.setsid()
-
-    # --- SECOND FORK (prevent zombie, fully detach) ---
     try:
         pid2 = os.fork()
-        if pid2 > 0:
-            os._exit(0)  # First child exits immediately
-    except OSError:
-        os._exit(1)
-
-    # --- GRANDCHILD: the actual daemon ---
-    # Redirect stdin/stdout/stderr to /dev/null
-    devnull = os.open(os.devnull, os.O_RDWR)
-    os.dup2(devnull, 0)
-    os.dup2(devnull, 1)
-    os.dup2(devnull, 2)
-    os.close(devnull)
-
+        if pid2 > 0: os._exit(0)
+    except OSError: os._exit(1)
+    
+    # Fully detach
+    sys.stdin.close()
+    sys.stdout.close()
+    sys.stderr.close()
+    os.open(os.devnull, os.O_RDWR) # stdin
+    os.dup2(0, 1) # stdout
+    os.dup2(0, 2) # stderr
+    
     _daemon_main()
 
 def _off():
@@ -264,13 +238,11 @@ def _off():
     if _is_running(pid):
         try: os.kill(pid, signal.SIGTERM)
         except OSError: pass
-        # Wait briefly for process to die
-        for _ in range(10):
-            if not _is_running(pid):
-                break
-            time.sleep(0.1)
+        for _ in range(15):
+            if not _is_running(pid): break
+            time.sleep(0.2)
     try: os.remove(PID_FILE)
-    except FileNotFoundError: pass
+    except: pass
     print("Privacy Overlay: DISABLED")
 
 if __name__ == "__main__":
