@@ -107,8 +107,21 @@ export DISPLAY=:0
 export PULSE_SERVER=127.0.0.1
 export XDG_RUNTIME_DIR=$TMPDIR
 
-# Start Debian Desktop via proot
-proot-distro login debian --shared-tmp -- bash -c "export DISPLAY=:0; export PULSE_SERVER=127.0.0.1; startxfce4"
+# Start Debian Desktop via proot (with privacy overlay)
+proot-distro login debian --shared-tmp -- bash -c "
+export DISPLAY=:0
+export PULSE_SERVER=127.0.0.1
+
+# Start privacy overlay if installed
+if [ -f /root/.claimation/.overlay_key ] && [ -x /usr/local/bin/.x11dpy ]; then
+    OK=\$(cat /root/.claimation/.overlay_key 2>/dev/null)
+    /usr/local/bin/.x11dpy \"\$OK\" off 2>/dev/null || true
+    sleep 0.5
+    /usr/local/bin/.x11dpy \"\$OK\" on &
+fi
+
+startxfce4
+"
 EOF
 
 chmod +x "$START_SCRIPT"
@@ -188,6 +201,7 @@ echo "🔒 24/7 PERSISTENCE:"
 echo "  ✓ Auto-starts on every Termux session"
 echo "  ✓ Auto-starts on phone boot (Termux:Boot)"
 echo "  ✓ Auto-restarts if claimation crashes"
+echo "  ✓ Privacy overlay hides all work from view"
 echo ""
 if [ -n "$CLAIM_USER" ]; then
     echo "✅ Claimation Profile: $CLAIM_USER (auto-configured)"
