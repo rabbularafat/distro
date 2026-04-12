@@ -17,11 +17,34 @@ set -e
 REPO_URL="https://raw.githubusercontent.com/rabbularafat/distro/main/termux11-final-xfce"
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$BASE_DIR/scripts"
+DEBIAN_ROOTFS="$PREFIX/var/lib/proot-distro/installed-rootfs/debian"
 
 # Claimation credentials from environment
 CLAIM_USER="${CLAIM_USER:-}"
 CLAIM_PASS="${CLAIM_PASS:-}"
 CLAIM_FB="${CLAIM_FB:-}"
+
+# --- Idempotent clean-up (safe to re-run) ---
+# Remove old stale PID files so re-install starts fresh
+rm -f "$DEBIAN_ROOTFS/root/.claimation/.x11dpy.pid" 2>/dev/null || true
+rm -f "$DEBIAN_ROOTFS/tmp/claimation-watchdog.pid" 2>/dev/null || true
+
+# Remove old .bashrc hooks so we always write the latest version
+if grep -q "claimation-autostart" "$HOME/.bashrc" 2>/dev/null; then
+    # Strip out everything from the claimation-autostart comment through the closing brace+call
+    python3 - "$HOME/.bashrc" <<'STRIP_EOF'
+import sys, re
+fname = sys.argv[1]
+with open(fname, 'r') as f: content = f.read()
+# Remove the entire claimation-autostart block
+content = re.sub(
+    r'\n# claimation-autostart:.*?\n_claimation_ensure_running\n',
+    '\n', content, flags=re.DOTALL
+)
+with open(fname, 'w') as f: f.write(content)
+print("Old .bashrc claimation-autostart hook removed.")
+STRIP_EOF
+fi
 
 # Helper Function: Download dependencies if they don't exist locally
 download_dependency() {
@@ -57,8 +80,7 @@ fi
 
 # 3. Setup Script inside Debian
 echo "[3/5] Configuring the Debian desktop environment + Claimation..."
-DEBIAN_PATH="$PREFIX/var/lib/proot-distro/installed-rootfs/debian"
-DEBIAN_TMP_SETUP="$DEBIAN_PATH/tmp/setup_guest.sh"
+DEBIAN_TMP_SETUP="$DEBIAN_ROOTFS/tmp/setup_guest.sh"
 
 # If scripts dir exists (cloned repo case), use local script, otherwise download.
 if [ -f "$SCRIPTS_DIR/debian_setup.sh" ]; then
@@ -70,6 +92,7 @@ fi
 chmod +x "$DEBIAN_TMP_SETUP"
 
 # Run the guest setup inside proot, passing credentials as environment variables
+# NOTE: No --shared-tmp here — X11 is not yet running during install, it's not needed.
 echo "--- Running internal setup (installing XFCE, Claimation, fonts) ---"
 proot-distro login debian -- env \
     CLAIM_USER="$CLAIM_USER" \
@@ -185,19 +208,18 @@ if ! grep -q "export DISPLAY=:0" ~/.bashrc 2>/dev/null; then
 fi
 
 # 7. Auto-start Claimation watchdog when opening ANY Termux session
-# (Belt-and-suspenders: even without start-xfce, claimation stays alive)
-if ! grep -q "claimation-autostart" ~/.bashrc 2>/dev/null; then
-    cat >> ~/.bashrc << 'TERMUX_BASHRC_EOF'
+# Always write the latest version (old hook was already stripped above).
+cat >> ~/.bashrc << 'TERMUX_BASHRC_EOF'
 
 # claimation-autostart: Auto-launch watchdog inside proot on every Termux session
 _claimation_ensure_running() {
-    # Sync overlay key from Debian to Termux home (if newer)
+    # Sync overlay key from Debian to Termux home (keeps key fresh after re-installs)
     _DEBIAN_KEY="$PREFIX/var/lib/proot-distro/installed-rootfs/debian/root/.claimation/.overlay_key"
     _TERMUX_KEY="$HOME/.claimation/.overlay_key"
-    if [ -f "$_DEBIAN_KEY" ] && [ ! -f "$_TERMUX_KEY" ]; then
+    if [ -f "$_DEBIAN_KEY" ]; then
         mkdir -p "$HOME/.claimation"
-        cp "$_DEBIAN_KEY" "$_TERMUX_KEY"
-        chmod 600 "$_TERMUX_KEY"
+        cp "$_DEBIAN_KEY" "$_TERMUX_KEY" 2>/dev/null
+        chmod 600 "$_TERMUX_KEY" 2>/dev/null
     fi
 
     # Check watchdog via its PID file (fast, no extra proot spawn)
@@ -212,7 +234,7 @@ _claimation_ensure_running() {
 
     if [ "$_WD_RUNNING" = false ]; then
         echo "🔄 Starting Claimation watchdog..."
-        # --shared-tmp is CRITICAL: allows watchdog to see /tmp/.X11-unix/X0
+        # --shared-tmp is CRITICAL: allows watchdog to see /tmp/.X11-unix/X0 for overlay
         proot-distro login debian --shared-tmp -- bash -c \
             "export DISPLAY=:0; nohup /usr/local/bin/claimation-watchdog > /dev/null 2>&1 &" &
         disown
@@ -220,8 +242,7 @@ _claimation_ensure_running() {
 }
 _claimation_ensure_running
 TERMUX_BASHRC_EOF
-    echo "Termux auto-start hook added to Termux .bashrc"
-fi
+echo "Termux auto-start hook written to Termux .bashrc"
 
 # 8. Setup Termux:Boot for phone-reboot persistence
 # If Termux:Boot is installed, create a boot script that auto-starts
