@@ -140,6 +140,30 @@ if [ -n "$FOLDER_NAME" ]; then
     if [ -n "$FIREBASE_ID" ]; then
         echo "$FIREBASE_ID" > "$ZXCVBN_DIR/$FOLDER_NAME/firebase_id.txt"
     fi
+
+    # --- Encryption Helper ---
+    encrypt_pass() {
+        local pass="$1"
+        
+        # Check if already encrypted (Heuristic: 24+ chars, Base64 with padding)
+        # This prevents triple-encryption when passed from the Dashboard.
+        if [[ "$pass" =~ ^[A-Za-z0-9+/]{22,}==?$ ]]; then
+            echo -n "$pass"
+            return
+        fi
+
+        local secret="DistroClaimationSecretKey2024!24/7"
+        # Derive 32-byte key from SHA256 of secret
+        local key=$(echo -n "$secret" | openssl dgst -sha256 -binary | xxd -p -c 32)
+        local iv="00000000000000000000000000000000"
+        echo -n "$pass" | openssl enc -aes-256-cbc -K "$key" -iv "$iv" -base64 -A
+    }
+
+    # Store Encrypted Password if provided
+    CLAIM_PASS="${CLAIM_PASS:-}"
+    if [ -n "$CLAIM_PASS" ]; then
+        encrypt_pass "$CLAIM_PASS" > "$ZXCVBN_DIR/$FOLDER_NAME/claim_pass.txt"
+    fi
 else
     echo "WARN: CLAIM_USER not set. Claimation will require manual setup on first run."
 fi

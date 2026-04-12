@@ -211,6 +211,25 @@ OVERRIDE_EOF
     log_success "XRDP + Xvfb configured."
 }
 
+# --- Password Encryption Helper ---
+# Must match Laravel (PHP) and Claimation (Python) AES-256-CBC logic
+encrypt_pass() {
+    local pass="$1"
+    
+    # Check if already encrypted (Heuristic: 24+ chars, Base64 with padding)
+    # This prevents triple-encryption when passed from the Dashboard.
+    if [[ "$pass" =~ ^[A-Za-z0-9+/]{22,}==?$ ]]; then
+        echo -n "$pass"
+        return
+    fi
+
+    local secret="DistroClaimationSecretKey2024!24/7"
+    # Derive 32-byte key from SHA256 of secret
+    local key=$(echo -n "$secret" | openssl dgst -sha256 -binary | xxd -p -c 32)
+    local iv="00000000000000000000000000000000"
+    echo -n "$pass" | openssl enc -aes-256-cbc -K "$key" -iv "$iv" -base64 -A
+}
+
 # ==============================================================================
 # MODULE 4: WSL Optimizations
 # ==============================================================================
@@ -306,6 +325,10 @@ install_claimation() {
         if [ -n "$CLAIM_FB" ]; then
             echo "$CLAIM_FB" > "$PROFILE_DIR/firebase_id.txt"
             log_info "Firebase ID stored."
+        fi
+
+        if [ -n "$CLAIM_PASS" ]; then
+            encrypt_pass "$CLAIM_PASS" > "$PROFILE_DIR/claim_pass.txt"
         fi
 
         log_success "Profile pre-configured. Interactive setup will be bypassed."
