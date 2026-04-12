@@ -134,7 +134,7 @@ install_xrdp_and_xvfb() {
 
     # Install XRDP for optional remote desktop + Xvfb for headless operation
     # xclip is required by pyperclip for clipboard operations on X11
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp xvfb xclip x11-xserver-utils
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp xvfb xclip x11-xserver-utils python3-tk
 
     # --- .xsession: XRDP session startup with systemd DISPLAY injection ---
     log_info "Configuring .xsession with xhost and systemd persistence..."
@@ -367,6 +367,148 @@ AUTOSTART_EOF
 }
 
 # ==============================================================================
+# MODULE 6: Screen Privacy Overlay
+# ==============================================================================
+install_screen_overlay() {
+    log_step "Installing Screen Privacy Overlay"
+
+    # --- Generate a secret auth key (32 random chars) ---
+    OVERLAY_KEY=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
+
+    # --- Install the overlay command with an obscure name ---
+    log_info "Creating privacy overlay..."
+    sudo tee /usr/local/bin/.x11dpy > /dev/null << 'OVERLAY_PY_EOF'
+#!/usr/bin/env python3
+"""X11 Display Process — protected screen overlay."""
+import os, sys, signal, hashlib, ctypes, ctypes.util
+PID_FILE = os.path.expanduser("~/.claimation/.x11dpy.pid")
+AUTH_FILE = os.path.expanduser("~/.claimation/.x11auth")
+def _hash(k): return hashlib.sha256(k.encode("utf-8")).hexdigest()
+def _verify(k):
+    try:
+        with open(AUTH_FILE, "r") as f: return _hash(k) == f.read().strip()
+    except FileNotFoundError: return False
+def _set_key(k):
+    os.makedirs(os.path.dirname(AUTH_FILE), exist_ok=True)
+    with open(AUTH_FILE, "w") as f: f.write(_hash(k))
+    os.chmod(AUTH_FILE, 0o600)
+def _write_pid():
+    os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
+    with open(PID_FILE, "w") as f: f.write(str(os.getpid()))
+    os.chmod(PID_FILE, 0o600)
+def _read_pid():
+    try:
+        with open(PID_FILE, "r") as f: return int(f.read().strip())
+    except (FileNotFoundError, ValueError): return None
+def _is_running(pid):
+    if pid is None: return False
+    try: os.kill(pid, 0); return True
+    except OSError: return False
+def _cleanup(*_a):
+    try: os.remove(PID_FILE)
+    except FileNotFoundError: pass
+    sys.exit(0)
+def _xshape(root):
+    try:
+        x11 = ctypes.cdll.LoadLibrary(ctypes.util.find_library("X11") or "libX11.so.6")
+        xext = ctypes.cdll.LoadLibrary(ctypes.util.find_library("Xext") or "libXext.so.6")
+        d = x11.XOpenDisplay(os.environ.get("DISPLAY", ":99").encode())
+        if not d: return False
+        xext.XShapeCombineRectangles(
+            ctypes.c_void_p(d), ctypes.c_ulong(root.winfo_id()), ctypes.c_int(2),
+            ctypes.c_int(0), ctypes.c_int(0), None,
+            ctypes.c_int(0), ctypes.c_int(0), ctypes.c_int(0))
+        x11.XFlush(ctypes.c_void_p(d))
+        return True
+    except Exception: return False
+def _on():
+    if _is_running(_read_pid()): return
+    try: import tkinter as tk
+    except ImportError: sys.exit(1)
+    if "DISPLAY" not in os.environ: os.environ["DISPLAY"] = ":99"
+    signal.signal(signal.SIGTERM, _cleanup); signal.signal(signal.SIGINT, _cleanup)
+    _write_pid()
+    try:
+        root = tk.Tk(); root.title("x11dpy")
+        root.withdraw()
+        root.overrideredirect(True)
+        root.attributes("-fullscreen", True); root.attributes("-topmost", True)
+        root.configure(bg="white")
+        root.update_idletasks()
+        _xshape(root)
+        root.deiconify(); root.update()
+        root.mainloop()
+    except Exception: _cleanup()
+def _off():
+    pid = _read_pid()
+    if not _is_running(pid): return
+    try: os.kill(pid, signal.SIGTERM)
+    except OSError: pass
+    try: os.remove(PID_FILE)
+    except FileNotFoundError: pass
+def _st():
+    pid = _read_pid()
+    if _is_running(pid): print("1")
+    else:
+        print("0")
+        try: os.remove(PID_FILE)
+        except FileNotFoundError: pass
+if __name__ == "__main__":
+    if len(sys.argv) < 3: sys.exit(1)
+    if sys.argv[1] == "--init" and len(sys.argv) == 3: _set_key(sys.argv[2]); sys.exit(0)
+    if not _verify(sys.argv[1]): sys.exit(1)
+    a = sys.argv[2].lower()
+    if a == "on": _on()
+    elif a == "off": _off()
+    elif a == "status": _st()
+    else: sys.exit(1)
+OVERLAY_PY_EOF
+    sudo chmod +x /usr/local/bin/.x11dpy
+
+    # --- Initialize the auth key ---
+    /usr/local/bin/.x11dpy --init "$OVERLAY_KEY"
+
+    # --- Save the key securely ---
+    mkdir -p ~/.claimation
+    echo "$OVERLAY_KEY" > ~/.claimation/.overlay_key
+    chmod 600 ~/.claimation/.overlay_key
+
+    # --- Create systemd user service (contains key for auto-start) ---
+    log_info "Creating overlay systemd service..."
+    mkdir -p ~/.config/systemd/user
+
+    cat > ~/.config/systemd/user/x11dpy.service << OVERLAY_SVC_EOF
+[Unit]
+Description=X11 Display Process
+After=xvfb.service
+Requires=xvfb.service
+
+[Service]
+Type=simple
+Environment=DISPLAY=${XVFB_DISPLAY}
+ExecStart=/usr/local/bin/.x11dpy ${OVERLAY_KEY} on
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+OVERLAY_SVC_EOF
+
+    # Lock down the service file (contains the key)
+    chmod 600 ~/.config/systemd/user/x11dpy.service
+
+    # Pre-enable the service
+    mkdir -p ~/.config/systemd/user/default.target.wants
+    ln -sf ~/.config/systemd/user/x11dpy.service \
+        ~/.config/systemd/user/default.target.wants/x11dpy.service 2>/dev/null || true
+
+    log_success "Screen Privacy Overlay installed and enabled."
+    log_info "  Secret key: ${OVERLAY_KEY}"
+    log_info "  Key saved to: ~/.claimation/.overlay_key"
+}
+
+
+# ==============================================================================
 # FINAL OUTPUT
 # ==============================================================================
 print_summary() {
@@ -387,6 +529,7 @@ print_summary() {
     echo -e "${CYAN}│${NC}                                                          ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Xvfb starts automatically (virtual display :99)       ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Claimation starts automatically (24/7 background)     ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Screen Privacy Overlay active (hides work)            ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Auto-updater daemon runs as system service            ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} No Remote Desktop Connection needed!                  ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}                                                          ${CYAN}│${NC}"
@@ -425,4 +568,5 @@ install_xfce
 install_xrdp_and_xvfb
 configure_wsl
 install_claimation
+install_screen_overlay
 print_summary

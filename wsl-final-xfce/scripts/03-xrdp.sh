@@ -7,7 +7,7 @@ log_step "Step 3: Installing and configuring XRDP + Xvfb..."
 # xclip: required by pyperclip for clipboard operations
 # xvfb: virtual framebuffer for headless GUI (pyautogui, Chrome work on it)
 # x11-xserver-utils: provides xhost command
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp xvfb xclip x11-xserver-utils
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp xvfb xclip x11-xserver-utils python3-tk
 
 # Configure XRDP session with systemd DISPLAY injection
 log_info "Setting up .xsession with xhost and systemd persistence..."
