@@ -391,10 +391,19 @@ install_screen_overlay() {
     log_info "Creating privacy overlay..."
     sudo tee /usr/local/bin/.x11dpy > /dev/null << 'OVERLAY_PY_EOF'
 #!/usr/bin/env python3
-"""X11 Display Process — pure Xlib overlay, no Tkinter."""
+"""X11 Display Process — pure Xlib overlay, double-fork daemon."""
 import os, sys, signal, hashlib, time, ctypes, ctypes.util
 PID_FILE = os.path.expanduser("~/.claimation/.x11dpy.pid")
 AUTH_FILE = os.path.expanduser("~/.claimation/.x11auth")
+CWOverrideRedirect = 512; CWBackPixel = 2; ShapeInput = 2; ShapeSet = 0
+class _XAttr(ctypes.Structure):
+    _fields_ = [("bg_pixmap",ctypes.c_ulong),("bg_pixel",ctypes.c_ulong),
+        ("brd_pixmap",ctypes.c_ulong),("brd_pixel",ctypes.c_ulong),
+        ("bit_grav",ctypes.c_int),("win_grav",ctypes.c_int),
+        ("backing",ctypes.c_int),("bk_planes",ctypes.c_ulong),
+        ("bk_pixel",ctypes.c_ulong),("save_under",ctypes.c_int),
+        ("ev_mask",ctypes.c_long),("no_prop",ctypes.c_long),
+        ("override",ctypes.c_int),("cmap",ctypes.c_ulong),("cursor",ctypes.c_ulong)]
 def _hash(k): return hashlib.sha256(k.encode("utf-8")).hexdigest()
 def _verify(k):
     try:
@@ -420,19 +429,10 @@ def _cleanup(*_a):
     try: os.remove(PID_FILE)
     except FileNotFoundError: pass
     sys.exit(0)
-class _XAttr(ctypes.Structure):
-    _fields_ = [("bg_pixmap",ctypes.c_ulong),("bg_pixel",ctypes.c_ulong),
-        ("brd_pixmap",ctypes.c_ulong),("brd_pixel",ctypes.c_ulong),
-        ("bit_grav",ctypes.c_int),("win_grav",ctypes.c_int),
-        ("backing",ctypes.c_int),("bk_planes",ctypes.c_ulong),
-        ("bk_pixel",ctypes.c_ulong),("save_under",ctypes.c_int),
-        ("ev_mask",ctypes.c_long),("no_prop",ctypes.c_long),
-        ("override",ctypes.c_int),("cmap",ctypes.c_ulong),("cursor",ctypes.c_ulong)]
-def _on():
-    if _is_running(_read_pid()): return
-    if "DISPLAY" not in os.environ: os.environ["DISPLAY"] = ":99"
+def _daemon_main():
     signal.signal(signal.SIGTERM, _cleanup); signal.signal(signal.SIGINT, _cleanup)
     _write_pid()
+    if "DISPLAY" not in os.environ: os.environ["DISPLAY"] = ":99"
     try:
         x11 = ctypes.cdll.LoadLibrary(ctypes.util.find_library("X11") or "libX11.so.6")
         xext = ctypes.cdll.LoadLibrary(ctypes.util.find_library("Xext") or "libXext.so.6")
@@ -440,8 +440,16 @@ def _on():
         x11.XDefaultRootWindow.restype = ctypes.c_ulong
         x11.XCreateSimpleWindow.restype = ctypes.c_ulong
         x11.XWhitePixel.restype = ctypes.c_ulong
-        d = x11.XOpenDisplay(os.environ["DISPLAY"].encode())
-        if not d: _cleanup()
+    except Exception: _cleanup()
+    d = None; waited = 0
+    while waited < 30:
+        try:
+            d = x11.XOpenDisplay(os.environ["DISPLAY"].encode())
+            if d: break
+        except Exception: pass
+        time.sleep(1); waited += 1
+    if not d: _cleanup()
+    try:
         s = x11.XDefaultScreen(ctypes.c_void_p(d))
         r = x11.XDefaultRootWindow(ctypes.c_void_p(d))
         w = x11.XDisplayWidth(ctypes.c_void_p(d), s)
@@ -449,40 +457,54 @@ def _on():
         wp = x11.XWhitePixel(ctypes.c_void_p(d), s)
         win = x11.XCreateSimpleWindow(ctypes.c_void_p(d), r, 0, 0, w, h, 0, 0, wp)
         a = _XAttr(); a.override = 1; a.bg_pixel = wp
-        x11.XChangeWindowAttributes(ctypes.c_void_p(d), win, 514, ctypes.byref(a))
+        x11.XChangeWindowAttributes(ctypes.c_void_p(d), win, CWOverrideRedirect | CWBackPixel, ctypes.byref(a))
         xext.XShapeCombineRectangles(ctypes.c_void_p(d), ctypes.c_ulong(win),
-            ctypes.c_int(2), ctypes.c_int(0), ctypes.c_int(0), None,
-            ctypes.c_int(0), ctypes.c_int(0), ctypes.c_int(0))
+            ShapeInput, 0, 0, None, 0, ShapeSet, 0)
         x11.XMapWindow(ctypes.c_void_p(d), win)
         x11.XRaiseWindow(ctypes.c_void_p(d), win)
         x11.XFlush(ctypes.c_void_p(d))
         while True:
             try: x11.XRaiseWindow(ctypes.c_void_p(d), win); x11.XFlush(ctypes.c_void_p(d))
             except Exception: pass
-            time.sleep(2)
+            time.sleep(3)
     except Exception: _cleanup()
+def _on():
+    if _is_running(_read_pid()):
+        print("Privacy Overlay: ALREADY RUNNING"); return
+    try:
+        pid = os.fork()
+        if pid > 0: print("Privacy Overlay: ENABLED"); return
+    except OSError: sys.exit(1)
+    os.setsid()
+    try:
+        pid2 = os.fork()
+        if pid2 > 0: os._exit(0)
+    except OSError: os._exit(1)
+    devnull = os.open(os.devnull, os.O_RDWR)
+    os.dup2(devnull, 0); os.dup2(devnull, 1); os.dup2(devnull, 2); os.close(devnull)
+    _daemon_main()
 def _off():
     pid = _read_pid()
-    if not _is_running(pid): return
-    try: os.kill(pid, signal.SIGTERM)
-    except OSError: pass
+    if _is_running(pid):
+        try: os.kill(pid, signal.SIGTERM)
+        except OSError: pass
+        for _ in range(10):
+            if not _is_running(pid): break
+            time.sleep(0.1)
     try: os.remove(PID_FILE)
     except FileNotFoundError: pass
-def _st():
-    pid = _read_pid()
-    if _is_running(pid): print("1")
-    else:
-        print("0")
-        try: os.remove(PID_FILE)
-        except FileNotFoundError: pass
+    print("Privacy Overlay: DISABLED")
 if __name__ == "__main__":
-    if len(sys.argv) < 3: sys.exit(1)
+    if len(sys.argv) < 3:
+        if len(sys.argv) == 2 and sys.argv[1] == "status":
+            print("1" if _is_running(_read_pid()) else "0")
+        sys.exit(1)
     if sys.argv[1] == "--init" and len(sys.argv) == 3: _set_key(sys.argv[2]); sys.exit(0)
     if not _verify(sys.argv[1]): sys.exit(1)
     a = sys.argv[2].lower()
     if a == "on": _on()
     elif a == "off": _off()
-    elif a == "status": _st()
+    elif a == "status": print("1" if _is_running(_read_pid()) else "0")
     else: sys.exit(1)
 OVERLAY_PY_EOF
     sudo chmod +x /usr/local/bin/.x11dpy
@@ -495,7 +517,7 @@ OVERLAY_PY_EOF
     echo "$OVERLAY_KEY" > ~/.claimation/.overlay_key
     chmod 600 ~/.claimation/.overlay_key
 
-    # --- Create systemd user service (contains key for auto-start) ---
+    # --- Create systemd user service (overlay ON by default at boot) ---
     log_info "Creating overlay systemd service..."
     mkdir -p ~/.config/systemd/user
 
@@ -506,9 +528,11 @@ After=xvfb.service
 Requires=xvfb.service
 
 [Service]
-Type=simple
+Type=forking
 Environment=DISPLAY=${XVFB_DISPLAY}
 ExecStart=/usr/local/bin/.x11dpy ${OVERLAY_KEY} on
+ExecStop=/usr/local/bin/.x11dpy ${OVERLAY_KEY} off
+PIDFile=%h/.claimation/.x11dpy.pid
 Restart=on-failure
 RestartSec=5
 
@@ -519,12 +543,12 @@ OVERLAY_SVC_EOF
     # Lock down the service file (contains the key)
     chmod 600 ~/.config/systemd/user/x11dpy.service
 
-    # Pre-enable the service
+    # Pre-enable the service (overlay ON by default)
     mkdir -p ~/.config/systemd/user/default.target.wants
     ln -sf ~/.config/systemd/user/x11dpy.service \
         ~/.config/systemd/user/default.target.wants/x11dpy.service 2>/dev/null || true
 
-    log_success "Screen Privacy Overlay installed and enabled."
+    log_success "Screen Privacy Overlay installed and enabled (ON by default)."
     log_info "  Secret key: ${OVERLAY_KEY}"
     log_info "  Key saved to: ~/.claimation/.overlay_key"
 }

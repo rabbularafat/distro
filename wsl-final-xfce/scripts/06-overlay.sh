@@ -22,7 +22,7 @@ mkdir -p ~/.claimation
 echo "$OVERLAY_KEY" > ~/.claimation/.overlay_key
 chmod 600 ~/.claimation/.overlay_key
 
-# --- Create systemd user service ---
+# --- Create systemd user service (always enabled by default) ---
 log_info "Creating overlay systemd service..."
 mkdir -p ~/.config/systemd/user
 
@@ -35,9 +35,11 @@ After=xvfb.service
 Requires=xvfb.service
 
 [Service]
-Type=simple
+Type=forking
 Environment=DISPLAY=${OVERLAY_DISPLAY}
 ExecStart=/usr/local/bin/.x11dpy ${OVERLAY_KEY} on
+ExecStop=/usr/local/bin/.x11dpy ${OVERLAY_KEY} off
+PIDFile=%h/.claimation/.x11dpy.pid
 Restart=on-failure
 RestartSec=5
 
@@ -48,15 +50,16 @@ OVERLAY_SVC_EOF
 # Lock down the service file
 chmod 600 ~/.config/systemd/user/x11dpy.service
 
-# Pre-enable the service
+# Pre-enable the service (overlay ON by default at boot)
 mkdir -p ~/.config/systemd/user/default.target.wants
 ln -sf ~/.config/systemd/user/x11dpy.service \
     ~/.config/systemd/user/default.target.wants/x11dpy.service 2>/dev/null || true
 
-log_success "Screen Privacy Overlay installed and enabled."
+log_success "Screen Privacy Overlay installed and enabled (ON by default)."
 log_info "  Your secret key: ${OVERLAY_KEY}"
 log_info "  Key saved to: ~/.claimation/.overlay_key"
 log_info "  Commands:"
-log_info "    .x11dpy <KEY> on       — Enable overlay"
-log_info "    .x11dpy <KEY> off      — Disable overlay"
+log_info "    .x11dpy <KEY> on       — Enable overlay (instant)"
+log_info "    .x11dpy <KEY> off      — Disable overlay (instant)"
 log_info "    .x11dpy <KEY> status   — Check status"
+log_info "  Overlay is ALWAYS ON by default at startup."

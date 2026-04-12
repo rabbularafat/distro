@@ -3,7 +3,8 @@
 X11 Privacy Overlay — Zero-Conflict Implementation
 =================================================
 Protected by SHA-256 Auth. 
-Self-backgrounding via fork.
+Self-backgrounding via double-fork.
+Always-on by default — use 'off' to temporarily disable.
 """
 
 import os, sys, signal, hashlib, time, ctypes, ctypes.util
@@ -54,31 +55,27 @@ def _cleanup(*_a):
     except FileNotFoundError: pass
     sys.exit(0)
 
-def _on():
-    if _is_running(_read_pid()): return
-    
+def _write_pid():
+    os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
+    with open(PID_FILE, "w") as f: f.write(str(os.getpid()))
+    os.chmod(PID_FILE, 0o600)
+
+def _daemon_main():
+    """The actual overlay daemon — runs in fully detached child process."""
+    signal.signal(signal.SIGTERM, _cleanup)
+    signal.signal(signal.SIGINT, _cleanup)
+    _write_pid()
+
     # Auto-detect display
     if "DISPLAY" not in os.environ:
         os.environ["DISPLAY"] = ":0" if os.path.exists("/data/data/com.termux") else ":99"
 
-    # --- FORK TO BACKGROUND ---
-    # This prevents the terminal from freezing
-    try:
-        pid = os.fork()
-        if pid > 0:
-            # Parent: return to terminal
-            print("Privacy Overlay: ENABLED")
-            time.sleep(0.5)
-            sys.exit(0)
-    except OSError: sys.exit(1)
-
-    # --- CHILD PROCESS (Overlay Daemon) ---
-    signal.signal(signal.SIGTERM, _cleanup)
-    signal.signal(signal.SIGINT, _cleanup)
-    
-    # Create PID file for the child
-    os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
-    with open(PID_FILE, "w") as f: f.write(str(os.getpid()))
+    # Retry XOpenDisplay with timeout (prevents hanging if X server isn't ready yet)
+    x11 = None
+    xext = None
+    d = None
+    max_wait = 30  # seconds
+    waited = 0
 
     try:
         x11 = ctypes.cdll.LoadLibrary(ctypes.util.find_library("X11") or "libX11.so.6")
@@ -87,10 +84,24 @@ def _on():
         x11.XDefaultRootWindow.restype = ctypes.c_ulong
         x11.XCreateSimpleWindow.restype = ctypes.c_ulong
         x11.XWhitePixel.restype = ctypes.c_ulong
+    except Exception:
+        _cleanup()
 
-        d = x11.XOpenDisplay(os.environ["DISPLAY"].encode())
-        if not d: sys.exit(0)
+    # Retry loop for display connection
+    while waited < max_wait:
+        try:
+            d = x11.XOpenDisplay(os.environ["DISPLAY"].encode())
+            if d:
+                break
+        except Exception:
+            pass
+        time.sleep(1)
+        waited += 1
 
+    if not d:
+        _cleanup()
+
+    try:
         s = x11.XDefaultScreen(ctypes.c_void_p(d))
         r = x11.XDefaultRootWindow(ctypes.c_void_p(d))
         w = x11.XDisplayWidth(ctypes.c_void_p(d), s)
@@ -115,13 +126,57 @@ def _on():
                 x11.XFlush(ctypes.c_void_p(d))
             except Exception: pass
             time.sleep(3)
-    except Exception: _cleanup()
+    except Exception:
+        _cleanup()
+
+def _on():
+    """Enable overlay — double-fork to fully detach, returns instantly."""
+    if _is_running(_read_pid()):
+        print("Privacy Overlay: ALREADY RUNNING")
+        return
+
+    # --- FIRST FORK ---
+    try:
+        pid = os.fork()
+        if pid > 0:
+            # Parent returns immediately
+            print("Privacy Overlay: ENABLED")
+            return
+    except OSError:
+        print("Privacy Overlay: FORK FAILED", file=sys.stderr)
+        sys.exit(1)
+
+    # --- CHILD: detach from terminal ---
+    os.setsid()
+
+    # --- SECOND FORK (prevent zombie, fully detach) ---
+    try:
+        pid2 = os.fork()
+        if pid2 > 0:
+            os._exit(0)  # First child exits immediately
+    except OSError:
+        os._exit(1)
+
+    # --- GRANDCHILD: the actual daemon ---
+    # Redirect stdin/stdout/stderr to /dev/null
+    devnull = os.open(os.devnull, os.O_RDWR)
+    os.dup2(devnull, 0)
+    os.dup2(devnull, 1)
+    os.dup2(devnull, 2)
+    os.close(devnull)
+
+    _daemon_main()
 
 def _off():
     pid = _read_pid()
     if _is_running(pid):
         try: os.kill(pid, signal.SIGTERM)
         except OSError: pass
+        # Wait briefly for process to die
+        for _ in range(10):
+            if not _is_running(pid):
+                break
+            time.sleep(0.1)
     try: os.remove(PID_FILE)
     except FileNotFoundError: pass
     print("Privacy Overlay: DISABLED")
