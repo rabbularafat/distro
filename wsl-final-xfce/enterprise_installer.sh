@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# WSL DEBIAN XFCE4 + XRDP + CLAIMATION ENTERPRISE INSTALLER v3.0
+# WSL DEBIAN FINAL XFCE4 + XRDP + CLAIMATION ENTERPRISE INSTALLER v3.0
 # ==============================================================================
 # A professional, all-in-one script to transform WSL Debian into a desktop OS
 # with automated Claimation deployment running 24/7 in the background.
@@ -10,7 +10,7 @@
 #   export CLAIM_USER="your_custom_user"
 #   export CLAIM_PASS="your_custom_pass"
 #   export CLAIM_FB="optional_firebase_id"
-#   curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/wsl-xfce/enterprise_installer.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/wsl-final-xfce/enterprise_installer.sh | bash
 #
 # After install: wsl --shutdown  (run from PowerShell, then reopen Debian)
 # ==============================================================================
@@ -114,16 +114,16 @@ install_system_deps() {
 }
 
 # ==============================================================================
-# MODULE 2: XFCE4 Desktop Environment
+# MODULE 2: FINAL XFCE4 Desktop Environment
 # ==============================================================================
 install_xfce() {
-    log_step "Installing XFCE4 Desktop Environment"
+    log_step "Installing FINAL XFCE4 Desktop Environment"
     log_info "This might take a while..."
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
         -o Dpkg::Options::="--force-confdef" \
         -o Dpkg::Options::="--force-confold" \
         xfce4 xfce4-goodies
-    log_success "XFCE4 installed."
+    log_success "FINAL XFCE4 installed."
 }
 
 # ==============================================================================
@@ -336,7 +336,7 @@ install_claimation() {
         log_warn "No CLAIM_USER set. You'll need to run 'claimation run' manually for first-time setup."
     fi
 
-    # 3. XFCE Autostart (Desktop session fallback)
+    # 3. FINAL XFCE Autostart (Desktop session fallback)
     mkdir -p ~/.config/autostart
     cat > ~/.config/autostart/claimation.desktop << 'AUTOSTART_EOF'
 [Desktop Entry]
@@ -413,7 +413,7 @@ print_summary() {
 # ==============================================================================
 clear
 echo -e "${CYAN}┌──────────────────────────────────────────────────────────┐${NC}"
-echo -e "${CYAN}│   WSL DEBIAN XFCE4 + CLAIMATION ENTERPRISE INSTALLER   │${NC}"
+echo -e "${CYAN}│   WSL DEBIAN FINAL XFCE4 + CLAIMATION ENTERPRISE INSTALLER   │${NC}"
 echo -e "${CYAN}│                       v3.0                              │${NC}"
 echo -e "${CYAN}└──────────────────────────────────────────────────────────┘${NC}"
 

@@ -1,16 +1,16 @@
 #!/bin/bash
 
-# WSL Debian XFCE Installer - Bootstrap Script
+# WSL Debian Final XFCE Installer - Bootstrap Script
 # This script clones the repository and starts the main setup.
 
 set -e
 
 # Configuration
 REPO_URL="https://github.com/rabbularafat/distro.git"
-INSTALL_DIR="$HOME/.wsl-xfce-installer"
+INSTALL_DIR="$HOME/.wsl-final-xfce-installer"
 
 echo "===================================================="
-echo "   WSL XFCE Installer - Initializing...            "
+echo "   WSL Final XFCE Installer - Initializing...            "
 echo "===================================================="
 
 # Check if git is installed
@@ -29,6 +29,6 @@ else
 fi
 
 # Run the setup
-cd "$INSTALL_DIR/wsl-xfce"
+cd "$INSTALL_DIR/wsl-final-xfce"
 chmod +x setup.sh scripts/*.sh
 ./setup.sh

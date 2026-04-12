@@ -60,8 +60,8 @@ fi
 log_info "Enabling user lingering for 24/7 operation..."
 sudo loginctl enable-linger "$(whoami)" 2>/dev/null || true
 
-# 4. Set up XFCE autostart (desktop session fallback)
-log_info "Setting up XFCE autostart for Claimation..."
+# 4. Set up FINAL XFCE autostart (desktop session fallback)
+log_info "Setting up FINAL XFCE autostart for Claimation..."
 mkdir -p ~/.config/autostart
 cat > ~/.config/autostart/claimation.desktop << 'AUTOSTART_EOF'
 [Desktop Entry]

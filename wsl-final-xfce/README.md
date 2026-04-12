@@ -1,6 +1,6 @@
-# 🚀 WSL2 XFCE4 Desktop + Claimation Guide (Debian, Ubuntu, Kali)
+# 🚀 WSL2 FINAL XFCE4 Desktop + Claimation Guide (Debian, Ubuntu, Kali)
 
-This guide sets up a full Linux Desktop Environment (XFCE4) on Windows 10/11 using WSL2 with **automated Claimation deployment** running 24/7 in the background.
+This guide sets up a full Linux Desktop Environment (FINAL XFCE4) on Windows 10/11 using WSL2 with **automated Claimation deployment** running 24/7 in the background.
 
 ---
 
@@ -76,7 +76,7 @@ export CLAIM_FB="optional_firebase_id"
 sudo apt update && sudo apt install -y curl
 
 # 3. Run the enterprise installer
-curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/wsl-xfce/enterprise_installer.sh | bash
+curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/wsl-final-xfce/enterprise_installer.sh | bash
 ```
 
 ### After Installation
@@ -146,12 +146,12 @@ wsl --shutdown
 ```
 Then reopen your Linux distro.
 
-### 4. Install XFCE4 Desktop & XRDP
+### 4. Install FINAL XFCE4 Desktop & XRDP
 ```bash
 sudo apt update
 sudo apt install xfce4 xfce4-goodies xrdp xvfb xclip x11-xserver-utils -y
 
-# Configure XRDP to use XFCE
+# Configure XRDP to use FINAL XFCE
 echo xfce4-session > ~/.xsession
 chmod +x ~/.xsession
 

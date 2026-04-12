@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# Shared Utilities for WSL XFCE Installer
+# Shared Utilities for WSL Final XFCE Installer
 # ==============================================================================
 
 # Colors

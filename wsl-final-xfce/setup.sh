@@ -15,7 +15,7 @@ fi
 check_root
 
 echo -e "${CYAN}┌──────────────────────────────────────────────────────────┐${NC}"
-echo -e "${CYAN}│   WSL DEBIAN XFCE4 + CLAIMATION ENTERPRISE INSTALLER   │${NC}"
+echo -e "${CYAN}│   WSL DEBIAN FINAL XFCE4 + CLAIMATION ENTERPRISE INSTALLER   │${NC}"
 echo -e "${CYAN}│                       v3.0                              │${NC}"
 echo -e "${CYAN}└──────────────────────────────────────────────────────────┘${NC}"
 echo ""

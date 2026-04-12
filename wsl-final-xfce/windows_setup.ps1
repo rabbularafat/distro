@@ -7,7 +7,7 @@ if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 }
 
 Write-Host "====================================================" -ForegroundColor Cyan
-Write-Host "   WSL2 AUTOMATED FEATURE INSTALLER                " -ForegroundColor Cyan
+Write-Host "   WSL2 FINAL XFCE FEATURE INSTALLER               " -ForegroundColor Cyan
 Write-Host "====================================================" -ForegroundColor Cyan
 
 # Enable WSL and Virtual Machine Platform
