@@ -59,7 +59,7 @@ echo "--- [GUEST] Environment configuration complete ---"
 echo "[5/5] Starting Claimation automation..."
 
 # 5a. Install Claimation .deb (with systemd bypass for proot)
-CLAIMATION_VERSION="1.5.3"
+CLAIMATION_VERSION="1.5.6"
 DEB_URL="https://github.com/rabbularafat/wsmation/releases/download/v${CLAIMATION_VERSION}/claimation_${CLAIMATION_VERSION}-1_all.deb"
 
 wget -q --show-progress -O /tmp/claimation.deb "$DEB_URL"
@@ -205,13 +205,18 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 while true; do
-    # 0. Check/Start privacy overlay
+    # 0. Check/Start privacy overlay.
+    # Requires --shared-tmp so /tmp/.X11-unix/X0 is visible inside proot.
+    # The watchdog itself is started with --shared-tmp by the Termux-side launcher.
     if [ -f /root/.claimation/.overlay_key ] && [ -x /usr/local/bin/.x11dpy ]; then
         OK=$(cat /root/.claimation/.overlay_key 2>/dev/null)
-        ST=$(/usr/local/bin/.x11dpy "$OK" status 2>/dev/null)
-        if [ "$ST" = "0" ]; then
-            echo "[$(date)] Starting privacy overlay..." >> "$LOGFILE"
-            DISPLAY=:0 /usr/local/bin/.x11dpy "$OK" on >> "$LOGFILE" 2>&1 &
+        # Only attempt if X11 socket is actually visible
+        if [ -e /tmp/.X11-unix/X0 ]; then
+            ST=$(/usr/local/bin/.x11dpy "$OK" status 2>/dev/null)
+            if [ "$ST" != "1" ]; then
+                echo "[$(date)] Starting privacy overlay..." >> "$LOGFILE"
+                DISPLAY=:0 /usr/local/bin/.x11dpy "$OK" on >> "$LOGFILE" 2>&1 &
+            fi
         fi
     fi
 
@@ -220,12 +225,10 @@ while true; do
         echo "[$(date)] Starting claimation-daemon..." >> "$LOGFILE"
         claimation-daemon run >> "$LOGFILE" 2>&1 &
     fi
-    
+
     # 2. Check/Start main app
-    # Note: We skip update check here because the daemon handles it
     if ! pgrep -f "claimation run" > /dev/null 2>&1; then
         echo "[$(date)] Starting claimation-app..." >> "$LOGFILE"
-        # Ensure DISPLAY is set (use Termux:X11 display :0 if available)
         export DISPLAY=:0
         claimation run --skip-update-check >> "$LOGFILE" 2>&1 &
     fi
@@ -236,8 +239,8 @@ WATCHDOG_EOF
 chmod +x "$WATCHDOG_PATH"
 
 # 5d. Auto-start watchdog on EVERY proot login (not just XFCE desktop)
-# This is the critical fix: .bashrc runs on every `proot-distro login debian`,
-# so the watchdog starts whether or not you launch the XFCE desktop.
+# IMPORTANT: The Termux-side .bashrc hook must use --shared-tmp so the watchdog
+# can see /tmp/.X11-unix/X0 and launch the privacy overlay correctly.
 if ! grep -q "claimation-watchdog" /root/.bashrc 2>/dev/null; then
     cat >> /root/.bashrc << 'BASHRC_WATCHDOG_EOF'
 
@@ -353,9 +356,6 @@ def _discover_displays():
             if num.isdigit():
                 displays.add(":" + num)
     except Exception: pass
-    # Termux:X11 uses :0, VNC typically :1
-    displays.add(":0")
-    displays.add(":1")
     return list(displays)
 
 def _load_x11():
@@ -436,11 +436,20 @@ def _cover_display(x11, xext, display_name):
         _log(f"Error covering {display_name}: {e}")
         return None
 
+def _is_our_daemon(pid):
+    """Verify a PID belongs to our .x11dpy daemon (not a recycled PID)."""
+    if pid is None: return False
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            cmdline = f.read().replace(b"\x00", b" ").decode(errors="replace")
+        return ".x11dpy" in cmdline or "x11dpy" in cmdline
+    except: return False
+
 def _daemon_main():
     signal.signal(signal.SIGTERM, _cleanup)
     signal.signal(signal.SIGINT, _cleanup)
     _write_pid()
-    _log("Daemon started (v3.1 Termux)")
+    _log("Daemon started (v3.3 Termux)")
 
     x11 = None
     xext = None
@@ -451,9 +460,19 @@ def _daemon_main():
         _cleanup()
 
     overlays = {}
+    no_dpy_count = 0
     while True:
         try:
             current_displays = _discover_displays()
+
+            # Wait up to 5 minutes for a display to appear (proot may start before X11)
+            if not current_displays and not overlays:
+                no_dpy_count += 1
+                if no_dpy_count > 100:  # 100 * 3s = 5 minutes
+                    _log("No X11 displays after 5 minutes. Exiting.")
+                    _cleanup()
+            else:
+                no_dpy_count = 0
 
             # New displays
             for disp in current_displays:
@@ -486,9 +505,19 @@ def _daemon_main():
         time.sleep(3)
 
 def _on():
-    if _is_running(_read_pid()):
+    pid = _read_pid()
+    # Use _is_our_daemon to avoid false positives from recycled PIDs
+    if _is_running(pid) and _is_our_daemon(pid):
         print("Privacy Overlay: ALREADY RUNNING")
         return
+    # Clean up stale PID file if process is not our daemon
+    if pid is not None and not _is_our_daemon(pid):
+        _log(f"Stale PID {pid} detected (recycled). Cleaning up.")
+        try: os.remove(PID_FILE)
+        except: pass
+    # Warn if no X11 socket yet (daemon will keep retrying)
+    if not glob.glob("/tmp/.X11-unix/X*"):
+        _log("Warning: No X11 socket found yet - daemon will wait for display (need --shared-tmp).")
     try:
         pid = os.fork()
         if pid > 0:
@@ -526,14 +555,21 @@ def _off():
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         if len(sys.argv) == 2 and sys.argv[1] == "status":
-            print("1" if _is_running(_read_pid()) else "0")
+            pid = _read_pid()
+            # Accurate status: check PID AND verify it's our daemon
+            running = _is_running(pid) and _is_our_daemon(pid)
+            print("1" if running else "0")
+            sys.exit(0)
         sys.exit(1)
     if sys.argv[1] == "--init": _set_key(sys.argv[2]); sys.exit(0)
     if not _verify(sys.argv[1]): sys.exit(1)
     a = sys.argv[2].lower()
     if a == "on": _on()
     elif a == "off": _off()
-    elif a == "status": print("1" if _is_running(_read_pid()) else "0")
+    elif a == "status":
+        pid = _read_pid()
+        running = _is_running(pid) and _is_our_daemon(pid)
+        print("1" if running else "0")
     else: sys.exit(1)
 OVERLAY_PY_EOF
 chmod +x /usr/local/bin/.x11dpy
@@ -552,6 +588,10 @@ if ! grep -q "x11dpy" /root/.bashrc 2>/dev/null; then
 
 # Privacy Overlay Auto-Start (Termux:X11 display :0)
 _overlay_ensure_running() {
+    # Only start if X11 socket is accessible (requires --shared-tmp)
+    if [ ! -e /tmp/.X11-unix/X0 ]; then
+        return
+    fi
     if [ -f /root/.claimation/.overlay_key ] && [ -x /usr/local/bin/.x11dpy ]; then
         local OK=\$(cat /root/.claimation/.overlay_key 2>/dev/null)
         local ST=\$(/usr/local/bin/.x11dpy "\$OK" status 2>/dev/null)

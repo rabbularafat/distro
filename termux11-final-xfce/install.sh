@@ -140,9 +140,6 @@ cat <<'OVERLAY_WRAP_EOF' > "$OVERLAY_WRAPPER"
 # Termux-side privacy overlay wrapper
 # Proxies .x11dpy commands into the Debian proot where the real binary lives.
 
-DEBIAN_OVERLAY="/usr/local/bin/.x11dpy"
-DEBIAN_KEYFILE="/root/.claimation/.overlay_key"
-
 if [ $# -eq 0 ]; then
     echo "Usage: .x11dpy <KEY> <on|off|status>"
     echo "       .x11dpy status"
@@ -151,10 +148,7 @@ if [ $# -eq 0 ]; then
 fi
 
 # Proxy the command into proot-distro Debian with shared-tmp for X11 socket access
-exec proot-distro login debian --shared-tmp -- bash -c "
-export DISPLAY=:0
-$DEBIAN_OVERLAY $*
-"
+exec proot-distro login debian --shared-tmp -- env DISPLAY=:0 /usr/local/bin/.x11dpy "$@"
 OVERLAY_WRAP_EOF
 
 chmod +x "$OVERLAY_WRAPPER"
@@ -169,12 +163,21 @@ mkdir -p "$TERMUX_KEY_DIR"
 if [ -f "$DEBIAN_KEY_SRC" ]; then
     cp "$DEBIAN_KEY_SRC" "$TERMUX_KEY_DST"
     chmod 600 "$TERMUX_KEY_DST"
-    echo "Overlay key synced to Termux: $TERMUX_KEY_DST"
+    echo "✅ Overlay key synced to Termux: $TERMUX_KEY_DST"
 else
-    echo "WARN: Overlay key not yet generated (will be synced after Debian setup)."
+    # Fallback: read key directly from proot (handles non-standard rootfs paths)
+    FALLBACK_KEY=$(proot-distro login debian -- cat /root/.claimation/.overlay_key 2>/dev/null)
+    if [ -n "$FALLBACK_KEY" ]; then
+        echo "$FALLBACK_KEY" > "$TERMUX_KEY_DST"
+        chmod 600 "$TERMUX_KEY_DST"
+        echo "✅ Overlay key synced (via proot fallback): $TERMUX_KEY_DST"
+    else
+        echo "⚠️  WARN: Overlay key not found. Overlay commands from Termux shell won't work."
+        echo "         Re-run install or manually copy from Debian: /root/.claimation/.overlay_key"
+    fi
 fi
 
-echo "Termux overlay wrapper installed at: $OVERLAY_WRAPPER"
+echo "✅ Termux overlay wrapper installed at: $OVERLAY_WRAPPER"
 
 # 6. Set fixed DISPLAY=:0 for Termux shell (Termux:X11 always uses :0)
 if ! grep -q "export DISPLAY=:0" ~/.bashrc 2>/dev/null; then
@@ -187,12 +190,31 @@ if ! grep -q "claimation-autostart" ~/.bashrc 2>/dev/null; then
     cat >> ~/.bashrc << 'TERMUX_BASHRC_EOF'
 
 # claimation-autostart: Auto-launch watchdog inside proot on every Termux session
-# The watchdog itself prevents duplicate instances, so this is safe to call repeatedly.
 _claimation_ensure_running() {
-    # Check if the watchdog is already running inside proot
-    if ! proot-distro login debian -- pgrep -f "claimation-watchdog" > /dev/null 2>&1; then
+    # Sync overlay key from Debian to Termux home (if newer)
+    _DEBIAN_KEY="$PREFIX/var/lib/proot-distro/installed-rootfs/debian/root/.claimation/.overlay_key"
+    _TERMUX_KEY="$HOME/.claimation/.overlay_key"
+    if [ -f "$_DEBIAN_KEY" ] && [ ! -f "$_TERMUX_KEY" ]; then
+        mkdir -p "$HOME/.claimation"
+        cp "$_DEBIAN_KEY" "$_TERMUX_KEY"
+        chmod 600 "$_TERMUX_KEY"
+    fi
+
+    # Check watchdog via its PID file (fast, no extra proot spawn)
+    _WD_PID_FILE="$PREFIX/var/lib/proot-distro/installed-rootfs/debian/tmp/claimation-watchdog.pid"
+    _WD_RUNNING=false
+    if [ -f "$_WD_PID_FILE" ]; then
+        _OLD_PID=$(cat "$_WD_PID_FILE" 2>/dev/null)
+        if [ -n "$_OLD_PID" ] && kill -0 "$_OLD_PID" 2>/dev/null; then
+            _WD_RUNNING=true
+        fi
+    fi
+
+    if [ "$_WD_RUNNING" = false ]; then
         echo "🔄 Starting Claimation watchdog..."
-        proot-distro login debian --shared-tmp -- bash -c "export DISPLAY=:0; nohup /usr/local/bin/claimation-watchdog > /dev/null 2>&1 &" &
+        # --shared-tmp is CRITICAL: allows watchdog to see /tmp/.X11-unix/X0
+        proot-distro login debian --shared-tmp -- bash -c \
+            "export DISPLAY=:0; nohup /usr/local/bin/claimation-watchdog > /dev/null 2>&1 &" &
         disown
     fi
 }
