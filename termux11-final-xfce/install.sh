@@ -80,7 +80,7 @@ echo "--- Internal setup finished ---"
 
 # 4. Create the Start/Launch Script
 echo "[4/5] Creating the 'start-xfce' launcher..."
-START_SCRIPT="$HOME/start-xfce.sh"
+START_SCRIPT="$PREFIX/bin/start-xfce"
 
 cat <<'EOF' > "$START_SCRIPT"
 #!/data/data/com.termux/files/usr/bin/bash
@@ -125,11 +125,9 @@ startxfce4
 EOF
 
 chmod +x "$START_SCRIPT"
-
-# Create alias for easy launch
-if ! grep -q "alias start-xfce" ~/.bashrc 2>/dev/null; then
-    echo "alias start-xfce='bash $START_SCRIPT'" >> ~/.bashrc
-fi
+ln -sf "$START_SCRIPT" "$PREFIX/bin/termux11-final-xfce"
+# Legacy symlink for backward compatibility
+ln -sf "$START_SCRIPT" "$HOME/start-xfce.sh"
 
 # 5. Set fixed DISPLAY=:0 for Termux shell (Termux:X11 always uses :0)
 if ! grep -q "export DISPLAY=:0" ~/.bashrc 2>/dev/null; then
@@ -195,7 +193,7 @@ echo ""
 echo "📱 GUI SETUP:"
 echo "1. Install 'Termux:X11' Android APK if you haven't already."
 echo "2. Open 'Termux:X11' app to the black screen."
-echo "3. In Termux, type: start-xfce"
+echo "3. In Termux, type: start-xfce (or: termux11-final-xfce)"
 echo ""
 echo "🔒 24/7 PERSISTENCE:"
 echo "  ✓ Auto-starts on every Termux session"
