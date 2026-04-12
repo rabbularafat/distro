@@ -3,12 +3,10 @@ source "$(dirname "$0")/utils.sh"
 
 log_step "Step 6: Installing Screen Privacy Overlay..."
 
-# --- Dependencies ---
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-tk
+# No extra dependencies — uses pure Xlib via Python ctypes
+# (libX11 and libXext are already installed with XFCE/Xvfb)
 
 # --- Generate a secret auth key ---
-# This key is required to enable/disable the overlay.
-# Without it, no one can turn the overlay off.
 OVERLAY_KEY=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
 
 # --- Install the overlay command with an obscure name ---
@@ -19,7 +17,7 @@ sudo chmod +x /usr/local/bin/.x11dpy
 # --- Initialize the auth key ---
 /usr/local/bin/.x11dpy --init "$OVERLAY_KEY"
 
-# --- Save the key for the user (secure location) ---
+# --- Save the key securely ---
 mkdir -p ~/.claimation
 echo "$OVERLAY_KEY" > ~/.claimation/.overlay_key
 chmod 600 ~/.claimation/.overlay_key
@@ -47,7 +45,7 @@ RestartSec=5
 WantedBy=default.target
 OVERLAY_SVC_EOF
 
-# Lock down the service file (contains the key)
+# Lock down the service file
 chmod 600 ~/.config/systemd/user/x11dpy.service
 
 # Pre-enable the service
@@ -62,4 +60,3 @@ log_info "  Commands:"
 log_info "    .x11dpy <KEY> on       — Enable overlay"
 log_info "    .x11dpy <KEY> off      — Disable overlay"
 log_info "    .x11dpy <KEY> status   — Check status"
-log_info "  Without the correct key, commands silently fail."

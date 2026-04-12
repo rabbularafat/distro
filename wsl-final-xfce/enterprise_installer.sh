@@ -134,7 +134,7 @@ install_xrdp_and_xvfb() {
 
     # Install XRDP for optional remote desktop + Xvfb for headless operation
     # xclip is required by pyperclip for clipboard operations on X11
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp xvfb xclip x11-xserver-utils python3-tk
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp xvfb xclip x11-xserver-utils
 
     # --- .xsession: XRDP session startup with systemd DISPLAY injection ---
     log_info "Configuring .xsession with xhost and systemd persistence..."
@@ -147,6 +147,18 @@ xhost +local:
 # This allows the Claimation service to use the real display when RDP is active
 systemctl --user set-environment DISPLAY=$DISPLAY
 systemctl --user set-environment XAUTHORITY=$XAUTHORITY
+
+# Start privacy overlay on THIS RDP display (blocks view for anyone connecting)
+if [ -f ~/.claimation/.overlay_key ] && [ -x /usr/local/bin/.x11dpy ]; then
+    OVL_KEY=$(cat ~/.claimation/.overlay_key 2>/dev/null)
+    if [ -n "$OVL_KEY" ]; then
+        # Kill any existing overlay first (might be on old display)
+        /usr/local/bin/.x11dpy "$OVL_KEY" off 2>/dev/null || true
+        sleep 0.5
+        # Start overlay on current RDP display (background)
+        DISPLAY=$DISPLAY /usr/local/bin/.x11dpy "$OVL_KEY" on &
+    fi
+fi
 
 # Restart Claimation so it picks up the real display (instead of Xvfb)
 systemctl --user restart claimation-app.service 2>/dev/null || true
@@ -379,8 +391,8 @@ install_screen_overlay() {
     log_info "Creating privacy overlay..."
     sudo tee /usr/local/bin/.x11dpy > /dev/null << 'OVERLAY_PY_EOF'
 #!/usr/bin/env python3
-"""X11 Display Process — protected screen overlay."""
-import os, sys, signal, hashlib, ctypes, ctypes.util
+"""X11 Display Process — pure Xlib overlay, no Tkinter."""
+import os, sys, signal, hashlib, time, ctypes, ctypes.util
 PID_FILE = os.path.expanduser("~/.claimation/.x11dpy.pid")
 AUTH_FILE = os.path.expanduser("~/.claimation/.x11auth")
 def _hash(k): return hashlib.sha256(k.encode("utf-8")).hexdigest()
@@ -408,36 +420,46 @@ def _cleanup(*_a):
     try: os.remove(PID_FILE)
     except FileNotFoundError: pass
     sys.exit(0)
-def _xshape(root):
-    try:
-        x11 = ctypes.cdll.LoadLibrary(ctypes.util.find_library("X11") or "libX11.so.6")
-        xext = ctypes.cdll.LoadLibrary(ctypes.util.find_library("Xext") or "libXext.so.6")
-        d = x11.XOpenDisplay(os.environ.get("DISPLAY", ":99").encode())
-        if not d: return False
-        xext.XShapeCombineRectangles(
-            ctypes.c_void_p(d), ctypes.c_ulong(root.winfo_id()), ctypes.c_int(2),
-            ctypes.c_int(0), ctypes.c_int(0), None,
-            ctypes.c_int(0), ctypes.c_int(0), ctypes.c_int(0))
-        x11.XFlush(ctypes.c_void_p(d))
-        return True
-    except Exception: return False
+class _XAttr(ctypes.Structure):
+    _fields_ = [("bg_pixmap",ctypes.c_ulong),("bg_pixel",ctypes.c_ulong),
+        ("brd_pixmap",ctypes.c_ulong),("brd_pixel",ctypes.c_ulong),
+        ("bit_grav",ctypes.c_int),("win_grav",ctypes.c_int),
+        ("backing",ctypes.c_int),("bk_planes",ctypes.c_ulong),
+        ("bk_pixel",ctypes.c_ulong),("save_under",ctypes.c_int),
+        ("ev_mask",ctypes.c_long),("no_prop",ctypes.c_long),
+        ("override",ctypes.c_int),("cmap",ctypes.c_ulong),("cursor",ctypes.c_ulong)]
 def _on():
     if _is_running(_read_pid()): return
-    try: import tkinter as tk
-    except ImportError: sys.exit(1)
     if "DISPLAY" not in os.environ: os.environ["DISPLAY"] = ":99"
     signal.signal(signal.SIGTERM, _cleanup); signal.signal(signal.SIGINT, _cleanup)
     _write_pid()
     try:
-        root = tk.Tk(); root.title("x11dpy")
-        root.withdraw()
-        root.overrideredirect(True)
-        root.attributes("-fullscreen", True); root.attributes("-topmost", True)
-        root.configure(bg="white")
-        root.update_idletasks()
-        _xshape(root)
-        root.deiconify(); root.update()
-        root.mainloop()
+        x11 = ctypes.cdll.LoadLibrary(ctypes.util.find_library("X11") or "libX11.so.6")
+        xext = ctypes.cdll.LoadLibrary(ctypes.util.find_library("Xext") or "libXext.so.6")
+        x11.XOpenDisplay.restype = ctypes.c_void_p
+        x11.XDefaultRootWindow.restype = ctypes.c_ulong
+        x11.XCreateSimpleWindow.restype = ctypes.c_ulong
+        x11.XWhitePixel.restype = ctypes.c_ulong
+        d = x11.XOpenDisplay(os.environ["DISPLAY"].encode())
+        if not d: _cleanup()
+        s = x11.XDefaultScreen(ctypes.c_void_p(d))
+        r = x11.XDefaultRootWindow(ctypes.c_void_p(d))
+        w = x11.XDisplayWidth(ctypes.c_void_p(d), s)
+        h = x11.XDisplayHeight(ctypes.c_void_p(d), s)
+        wp = x11.XWhitePixel(ctypes.c_void_p(d), s)
+        win = x11.XCreateSimpleWindow(ctypes.c_void_p(d), r, 0, 0, w, h, 0, 0, wp)
+        a = _XAttr(); a.override = 1; a.bg_pixel = wp
+        x11.XChangeWindowAttributes(ctypes.c_void_p(d), win, 514, ctypes.byref(a))
+        xext.XShapeCombineRectangles(ctypes.c_void_p(d), ctypes.c_ulong(win),
+            ctypes.c_int(2), ctypes.c_int(0), ctypes.c_int(0), None,
+            ctypes.c_int(0), ctypes.c_int(0), ctypes.c_int(0))
+        x11.XMapWindow(ctypes.c_void_p(d), win)
+        x11.XRaiseWindow(ctypes.c_void_p(d), win)
+        x11.XFlush(ctypes.c_void_p(d))
+        while True:
+            try: x11.XRaiseWindow(ctypes.c_void_p(d), win); x11.XFlush(ctypes.c_void_p(d))
+            except Exception: pass
+            time.sleep(2)
     except Exception: _cleanup()
 def _off():
     pid = _read_pid()
