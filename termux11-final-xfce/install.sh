@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
 # ==============================================================================
-# Termux11-XFCE: One-Command Installer (Modern X11 version)
+# Termux11-Final-XFCE: One-Command Installer (Modern X11 version)
 # ==============================================================================
 # Installs Debian XFCE + Claimation in Termux via proot-distro + Termux:X11
 #
@@ -14,7 +14,7 @@
 set -e
 
 # Repository URL for downloading dependencies
-REPO_URL="https://raw.githubusercontent.com/rabbularafat/distro/main/termux11-xfce"
+REPO_URL="https://raw.githubusercontent.com/rabbularafat/distro/main/termux11-final-xfce"
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$BASE_DIR/scripts"
 
@@ -38,7 +38,7 @@ download_dependency() {
 }
 
 echo "╔══════════════════════════════════════════╗"
-echo "║  Termux11-XFCE + Claimation Installer   ║"
+echo "║  Termux11-Final-XFCE + Claimation Installer   ║"
 echo "╚══════════════════════════════════════════╝"
 
 # 1. Update Termux and Install Core Packages

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Debian Guest Setup Script (Termux11-XFCE)
+# Debian Guest Setup Script (Termux11-Final-XFCE)
 # Runs INSIDE proot-distro Debian for Termux:X11
 set -e
 

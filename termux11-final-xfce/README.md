@@ -1,4 +1,4 @@
-# Termux11-XFCE: Modern Debian Desktop + Claimation for Android
+# Termux11-Final-XFCE: Modern Debian Desktop + Claimation for Android
 
 Run a full Debian XFCE4 Desktop on your Android device with **automated Claimation deployment** using Termux:X11.
 
@@ -22,7 +22,7 @@ export CLAIM_FB="optional_firebase_id"
 
 # 2. Install everything
 pkg update -y && pkg install curl -y && \
-curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/termux11-xfce/install.sh -o install.sh && \
+curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/termux11-final-xfce/install.sh -o install.sh && \
 chmod +x install.sh && bash install.sh
 ```
 
@@ -70,7 +70,7 @@ The persistence layer requires a **single restart** of the Termux app to activat
 
 ## 🖥️ WHY THIS IS BETTER THAN VNC
 
-| Feature | Old VNC Method | Termux11-XFCE (Modern) |
+| Feature | Old VNC Method | Termux11-Final-XFCE (Modern) |
 | :--- | :--- | :--- |
 | **Connection** | Local Network (Port 5901) | Direct Display Server |
 | **Speed** | 🐢 Latency / Lag | ⚡ Smooth & Fast |
