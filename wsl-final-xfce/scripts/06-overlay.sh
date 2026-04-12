@@ -23,10 +23,9 @@ echo "$OVERLAY_KEY" > ~/.claimation/.overlay_key
 chmod 600 ~/.claimation/.overlay_key
 
 # --- Create systemd user service (always enabled by default) ---
+# NOTE: No DISPLAY env needed — the daemon auto-discovers ALL displays
 log_info "Creating overlay systemd service..."
 mkdir -p ~/.config/systemd/user
-
-OVERLAY_DISPLAY="${XVFB_DISPLAY:-:99}"
 
 cat > ~/.config/systemd/user/x11dpy.service << OVERLAY_SVC_EOF
 [Unit]
@@ -36,7 +35,6 @@ Requires=xvfb.service
 
 [Service]
 Type=forking
-Environment=DISPLAY=${OVERLAY_DISPLAY}
 ExecStart=/usr/local/bin/.x11dpy ${OVERLAY_KEY} on
 ExecStop=/usr/local/bin/.x11dpy ${OVERLAY_KEY} off
 PIDFile=%h/.claimation/.x11dpy.pid
@@ -62,4 +60,5 @@ log_info "  Commands:"
 log_info "    .x11dpy <KEY> on       — Enable overlay (instant)"
 log_info "    .x11dpy <KEY> off      — Disable overlay (instant)"
 log_info "    .x11dpy <KEY> status   — Check status"
+log_info "  Overlay covers ALL displays (Xvfb + XRDP sessions)."
 log_info "  Overlay is ALWAYS ON by default at startup."

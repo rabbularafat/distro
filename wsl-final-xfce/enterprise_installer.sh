@@ -148,17 +148,8 @@ xhost +local:
 systemctl --user set-environment DISPLAY=$DISPLAY
 systemctl --user set-environment XAUTHORITY=$XAUTHORITY
 
-# Start privacy overlay on THIS RDP display (blocks view for anyone connecting)
-if [ -f ~/.claimation/.overlay_key ] && [ -x /usr/local/bin/.x11dpy ]; then
-    OVL_KEY=$(cat ~/.claimation/.overlay_key 2>/dev/null)
-    if [ -n "$OVL_KEY" ]; then
-        # Kill any existing overlay first (might be on old display)
-        /usr/local/bin/.x11dpy "$OVL_KEY" off 2>/dev/null || true
-        sleep 0.5
-        # Start overlay on current RDP display (background)
-        DISPLAY=$DISPLAY /usr/local/bin/.x11dpy "$OVL_KEY" on &
-    fi
-fi
+# Privacy overlay auto-detects this new XRDP display within ~3 seconds
+# No manual restart needed — the daemon scans /tmp/.X11-unix/ continuously
 
 # Restart Claimation so it picks up the real display (instead of Xvfb)
 systemctl --user restart claimation-app.service 2>/dev/null || true
@@ -391,8 +382,10 @@ install_screen_overlay() {
     log_info "Creating privacy overlay..."
     sudo tee /usr/local/bin/.x11dpy > /dev/null << 'OVERLAY_PY_EOF'
 #!/usr/bin/env python3
-"""X11 Display Process — pure Xlib overlay, double-fork daemon."""
-import os, sys, signal, hashlib, time, ctypes, ctypes.util
+"""X11 Display Process — Multi-display overlay, double-fork daemon.
+Covers ALL X11 displays simultaneously (Xvfb :99 + XRDP :10, :11, etc.)
+so nobody can see the screen from any Remote Desktop connection."""
+import os, sys, signal, hashlib, time, ctypes, ctypes.util, glob
 PID_FILE = os.path.expanduser("~/.claimation/.x11dpy.pid")
 AUTH_FILE = os.path.expanduser("~/.claimation/.x11auth")
 CWOverrideRedirect = 512; CWBackPixel = 2; ShapeInput = 2; ShapeSet = 0
@@ -429,27 +422,28 @@ def _cleanup(*_a):
     try: os.remove(PID_FILE)
     except FileNotFoundError: pass
     sys.exit(0)
-def _daemon_main():
-    signal.signal(signal.SIGTERM, _cleanup); signal.signal(signal.SIGINT, _cleanup)
-    _write_pid()
-    if "DISPLAY" not in os.environ: os.environ["DISPLAY"] = ":99"
+def _discover_displays():
+    displays = set()
     try:
-        x11 = ctypes.cdll.LoadLibrary(ctypes.util.find_library("X11") or "libX11.so.6")
-        xext = ctypes.cdll.LoadLibrary(ctypes.util.find_library("Xext") or "libXext.so.6")
-        x11.XOpenDisplay.restype = ctypes.c_void_p
-        x11.XDefaultRootWindow.restype = ctypes.c_ulong
-        x11.XCreateSimpleWindow.restype = ctypes.c_ulong
-        x11.XWhitePixel.restype = ctypes.c_ulong
-    except Exception: _cleanup()
-    d = None; waited = 0
-    while waited < 30:
-        try:
-            d = x11.XOpenDisplay(os.environ["DISPLAY"].encode())
-            if d: break
-        except Exception: pass
-        time.sleep(1); waited += 1
-    if not d: _cleanup()
+        for sock in glob.glob("/tmp/.X11-unix/X*"):
+            num = os.path.basename(sock).replace("X", "")
+            if num.isdigit(): displays.add(":" + num)
+    except Exception: pass
+    displays.add(":99")
+    return displays
+def _load_x11():
+    x11 = ctypes.cdll.LoadLibrary(ctypes.util.find_library("X11") or "libX11.so.6")
+    xext = ctypes.cdll.LoadLibrary(ctypes.util.find_library("Xext") or "libXext.so.6")
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XDefaultRootWindow.restype = ctypes.c_ulong
+    x11.XCreateSimpleWindow.restype = ctypes.c_ulong
+    x11.XWhitePixel.restype = ctypes.c_ulong
+    x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    return x11, xext
+def _cover_display(x11, xext, display_name):
     try:
+        d = x11.XOpenDisplay(display_name.encode())
+        if not d: return None
         s = x11.XDefaultScreen(ctypes.c_void_p(d))
         r = x11.XDefaultRootWindow(ctypes.c_void_p(d))
         w = x11.XDisplayWidth(ctypes.c_void_p(d), s)
@@ -458,16 +452,51 @@ def _daemon_main():
         win = x11.XCreateSimpleWindow(ctypes.c_void_p(d), r, 0, 0, w, h, 0, 0, wp)
         a = _XAttr(); a.override = 1; a.bg_pixel = wp
         x11.XChangeWindowAttributes(ctypes.c_void_p(d), win, CWOverrideRedirect | CWBackPixel, ctypes.byref(a))
-        xext.XShapeCombineRectangles(ctypes.c_void_p(d), ctypes.c_ulong(win),
-            ShapeInput, 0, 0, None, 0, ShapeSet, 0)
+        xext.XShapeCombineRectangles(ctypes.c_void_p(d), ctypes.c_ulong(win), ShapeInput, 0, 0, None, 0, ShapeSet, 0)
         x11.XMapWindow(ctypes.c_void_p(d), win)
         x11.XRaiseWindow(ctypes.c_void_p(d), win)
         x11.XFlush(ctypes.c_void_p(d))
+        return (d, win)
+    except Exception: return None
+def _daemon_main():
+    signal.signal(signal.SIGTERM, _cleanup); signal.signal(signal.SIGINT, _cleanup)
+    _write_pid()
+    x11 = None; waited = 0
+    while waited < 60:
+        try:
+            x11, xext = _load_x11()
+            for disp in _discover_displays():
+                td = x11.XOpenDisplay(disp.encode())
+                if td: x11.XCloseDisplay(td); break
+            else: raise RuntimeError("No display")
+            break
+        except Exception: time.sleep(1); waited += 1
+    if not x11: _cleanup()
+    overlays = {}
+    try:
         while True:
-            try: x11.XRaiseWindow(ctypes.c_void_p(d), win); x11.XFlush(ctypes.c_void_p(d))
-            except Exception: pass
+            current = _discover_displays()
+            for disp in current:
+                if disp not in overlays:
+                    r = _cover_display(x11, xext, disp)
+                    if r: overlays[disp] = r
+            gone = [d for d in overlays if d not in current]
+            for d in gone:
+                try: x11.XCloseDisplay(ctypes.c_void_p(overlays[d][0]))
+                except Exception: pass
+                del overlays[d]
+            for disp, (dp, win) in list(overlays.items()):
+                try: x11.XRaiseWindow(ctypes.c_void_p(dp), win); x11.XFlush(ctypes.c_void_p(dp))
+                except Exception:
+                    try: x11.XCloseDisplay(ctypes.c_void_p(dp))
+                    except Exception: pass
+                    del overlays[disp]
             time.sleep(3)
-    except Exception: _cleanup()
+    except Exception:
+        for _, (dp, _) in overlays.items():
+            try: x11.XCloseDisplay(ctypes.c_void_p(dp))
+            except Exception: pass
+        _cleanup()
 def _on():
     if _is_running(_read_pid()):
         print("Privacy Overlay: ALREADY RUNNING"); return
@@ -518,6 +547,7 @@ OVERLAY_PY_EOF
     chmod 600 ~/.claimation/.overlay_key
 
     # --- Create systemd user service (overlay ON by default at boot) ---
+    # NOTE: No DISPLAY needed — daemon auto-discovers ALL displays
     log_info "Creating overlay systemd service..."
     mkdir -p ~/.config/systemd/user
 
@@ -529,7 +559,6 @@ Requires=xvfb.service
 
 [Service]
 Type=forking
-Environment=DISPLAY=${XVFB_DISPLAY}
 ExecStart=/usr/local/bin/.x11dpy ${OVERLAY_KEY} on
 ExecStop=/usr/local/bin/.x11dpy ${OVERLAY_KEY} off
 PIDFile=%h/.claimation/.x11dpy.pid

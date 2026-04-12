@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
 """
-X11 Privacy Overlay — Zero-Conflict Implementation
-=================================================
-Protected by SHA-256 Auth. 
+X11 Privacy Overlay — Multi-Display Coverage
+=============================================
+Protected by SHA-256 Auth.
 Self-backgrounding via double-fork.
 Always-on by default — use 'off' to temporarily disable.
+
+Covers ALL X11 displays simultaneously:
+  - :99 (Xvfb headless)
+  - :10, :11, :12... (XRDP sessions)
+  - Any other X display that appears
+
+This ensures nobody can see the screen via Remote Desktop or any
+other X11 connection — automated work continues uninterrupted underneath.
 """
 
-import os, sys, signal, hashlib, time, ctypes, ctypes.util
+import os, sys, signal, hashlib, time, ctypes, ctypes.util, glob, threading
 
 PID_FILE = os.path.expanduser("~/.claimation/.x11dpy.pid")
 AUTH_FILE = os.path.expanduser("~/.claimation/.x11auth")
@@ -60,48 +68,43 @@ def _write_pid():
     with open(PID_FILE, "w") as f: f.write(str(os.getpid()))
     os.chmod(PID_FILE, 0o600)
 
-def _daemon_main():
-    """The actual overlay daemon — runs in fully detached child process."""
-    signal.signal(signal.SIGTERM, _cleanup)
-    signal.signal(signal.SIGINT, _cleanup)
-    _write_pid()
-
-    # Auto-detect display
-    if "DISPLAY" not in os.environ:
-        os.environ["DISPLAY"] = ":0" if os.path.exists("/data/data/com.termux") else ":99"
-
-    # Retry XOpenDisplay with timeout (prevents hanging if X server isn't ready yet)
-    x11 = None
-    xext = None
-    d = None
-    max_wait = 30  # seconds
-    waited = 0
-
+def _discover_displays():
+    """Find ALL active X11 displays by scanning /tmp/.X11-unix/"""
+    displays = set()
     try:
-        x11 = ctypes.cdll.LoadLibrary(ctypes.util.find_library("X11") or "libX11.so.6")
-        xext = ctypes.cdll.LoadLibrary(ctypes.util.find_library("Xext") or "libXext.so.6")
-        x11.XOpenDisplay.restype = ctypes.c_void_p
-        x11.XDefaultRootWindow.restype = ctypes.c_ulong
-        x11.XCreateSimpleWindow.restype = ctypes.c_ulong
-        x11.XWhitePixel.restype = ctypes.c_ulong
+        for sock in glob.glob("/tmp/.X11-unix/X*"):
+            num = os.path.basename(sock).replace("X", "")
+            if num.isdigit():
+                displays.add(":" + num)
     except Exception:
-        _cleanup()
+        pass
+    # Always include :99 (Xvfb) as fallback
+    displays.add(":99")
+    return displays
 
-    # Retry loop for display connection
-    while waited < max_wait:
-        try:
-            d = x11.XOpenDisplay(os.environ["DISPLAY"].encode())
-            if d:
-                break
-        except Exception:
-            pass
-        time.sleep(1)
-        waited += 1
 
-    if not d:
-        _cleanup()
+def _load_x11():
+    """Load X11 and Xext shared libraries (once per process)."""
+    x11 = ctypes.cdll.LoadLibrary(ctypes.util.find_library("X11") or "libX11.so.6")
+    xext = ctypes.cdll.LoadLibrary(ctypes.util.find_library("Xext") or "libXext.so.6")
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XDefaultRootWindow.restype = ctypes.c_ulong
+    x11.XCreateSimpleWindow.restype = ctypes.c_ulong
+    x11.XWhitePixel.restype = ctypes.c_ulong
+    x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    return x11, xext
 
+
+def _cover_display(x11, xext, display_name):
+    """
+    Create an overlay window on a single X11 display.
+    Returns (display_ptr, window_id) or None on failure.
+    """
     try:
+        d = x11.XOpenDisplay(display_name.encode())
+        if not d:
+            return None
+
         s = x11.XDefaultScreen(ctypes.c_void_p(d))
         r = x11.XDefaultRootWindow(ctypes.c_void_p(d))
         w = x11.XDisplayWidth(ctypes.c_void_p(d), s)
@@ -110,24 +113,113 @@ def _daemon_main():
 
         win = x11.XCreateSimpleWindow(ctypes.c_void_p(d), r, 0, 0, w, h, 0, 0, wp)
         a = _XAttr(); a.override = 1; a.bg_pixel = wp
-        x11.XChangeWindowAttributes(ctypes.c_void_p(d), win, CWOverrideRedirect | CWBackPixel, ctypes.byref(a))
+        x11.XChangeWindowAttributes(
+            ctypes.c_void_p(d), win, CWOverrideRedirect | CWBackPixel, ctypes.byref(a)
+        )
 
-        # Input transparency (pyautogui workaround)
-        xext.XShapeCombineRectangles(ctypes.c_void_p(d), ctypes.c_ulong(win), ShapeInput, 0, 0, None, 0, ShapeSet, 0)
+        # Input transparency — clicks/keyboard pass through to apps below
+        xext.XShapeCombineRectangles(
+            ctypes.c_void_p(d), ctypes.c_ulong(win),
+            ShapeInput, 0, 0, None, 0, ShapeSet, 0
+        )
 
         x11.XMapWindow(ctypes.c_void_p(d), win)
         x11.XRaiseWindow(ctypes.c_void_p(d), win)
         x11.XFlush(ctypes.c_void_p(d))
 
-        # Daemon loop: stay on top
-        while True:
-            try:
-                x11.XRaiseWindow(ctypes.c_void_p(d), win)
-                x11.XFlush(ctypes.c_void_p(d))
-            except Exception: pass
-            time.sleep(3)
+        return (d, win)
     except Exception:
+        return None
+
+
+def _daemon_main():
+    """
+    The multi-display overlay daemon.
+
+    Manages overlay windows on ALL X11 displays simultaneously.
+    Periodically scans for new displays (e.g., new XRDP sessions)
+    and creates overlays on them too.
+    """
+    signal.signal(signal.SIGTERM, _cleanup)
+    signal.signal(signal.SIGINT, _cleanup)
+    _write_pid()
+
+    # Wait for at least one X display to become available
+    x11 = None
+    xext = None
+    max_wait = 60
+    waited = 0
+
+    while waited < max_wait:
+        try:
+            x11, xext = _load_x11()
+            displays = _discover_displays()
+            # Try to connect to at least one
+            for disp in displays:
+                test_d = x11.XOpenDisplay(disp.encode())
+                if test_d:
+                    x11.XCloseDisplay(test_d)
+                    break
+            else:
+                raise RuntimeError("No X display reachable yet")
+            break
+        except Exception:
+            time.sleep(1)
+            waited += 1
+
+    if not x11:
         _cleanup()
+
+    # Track overlay windows per display: { ":99": (display_ptr, window_id), ... }
+    overlays = {}
+
+    try:
+        while True:
+            # Discover all current displays
+            current_displays = _discover_displays()
+
+            # Create overlay on any NEW display we haven't covered
+            for disp in current_displays:
+                if disp not in overlays:
+                    result = _cover_display(x11, xext, disp)
+                    if result:
+                        overlays[disp] = result
+
+            # Remove overlays for displays that no longer exist
+            gone = [d for d in overlays if d not in current_displays]
+            for d in gone:
+                try:
+                    dp, _ = overlays[d]
+                    x11.XCloseDisplay(ctypes.c_void_p(dp))
+                except Exception:
+                    pass
+                del overlays[d]
+
+            # Keep all existing overlays on top (in case other windows are raised)
+            for disp, (dp, win) in list(overlays.items()):
+                try:
+                    x11.XRaiseWindow(ctypes.c_void_p(dp), win)
+                    x11.XFlush(ctypes.c_void_p(dp))
+                except Exception:
+                    # Display died — remove from tracking, will be re-detected next loop
+                    try:
+                        x11.XCloseDisplay(ctypes.c_void_p(dp))
+                    except Exception:
+                        pass
+                    del overlays[disp]
+
+            # Scan interval: check for new RDP sessions every 3 seconds
+            time.sleep(3)
+
+    except Exception:
+        # Cleanup all overlays on exit
+        for disp, (dp, _) in overlays.items():
+            try:
+                x11.XCloseDisplay(ctypes.c_void_p(dp))
+            except Exception:
+                pass
+        _cleanup()
+
 
 def _on():
     """Enable overlay — double-fork to fully detach, returns instantly."""

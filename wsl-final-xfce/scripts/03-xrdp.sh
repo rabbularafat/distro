@@ -21,6 +21,9 @@ xhost +local:
 systemctl --user set-environment DISPLAY=$DISPLAY
 systemctl --user set-environment XAUTHORITY=$XAUTHORITY
 
+# Privacy overlay auto-detects this new XRDP display within ~3 seconds
+# No manual restart needed — the daemon scans /tmp/.X11-unix/ continuously
+
 # Restart Claimation to pick up the real display
 systemctl --user restart claimation-app.service 2>/dev/null || true
 
