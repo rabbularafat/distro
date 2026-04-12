@@ -232,7 +232,7 @@ while true; do
         export DISPLAY=:0
         claimation run --skip-update-check >> "$LOGFILE" 2>&1 &
     fi
-    sleep 60
+    sleep 30
 done
 WATCHDOG_EOF
 

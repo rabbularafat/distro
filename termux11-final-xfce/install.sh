@@ -144,7 +144,7 @@ fi
 # Write the auto-starter (old hook was already stripped at top)
 cat >> ~/.bashrc << 'TERMUX_BASHRC_EOF'
 
-# claimation-autostart: mirrors WSL systemd behavior — auto-starts everything on login
+# claimation-autostart: mirrors WSL systemd — starts X11 + overlay + claimation automatically
 _claimation_ensure_running() {
     # ── 0. Sync overlay key (always keep Termux copy fresh) ──────────────
     _DEB_KEY="$PREFIX/var/lib/proot-distro/installed-rootfs/debian/root/.claimation/.overlay_key"
@@ -155,17 +155,30 @@ _claimation_ensure_running() {
         chmod 600 "$_TMX_KEY" 2>/dev/null
     fi
 
-    # ── 1. Start termux-x11 :0 (headless) if not running ─────────────────
-    # This is the Termux equivalent of WSL's Xvfb systemd service.
-    # termux-x11 must be running before the overlay daemon can connect to :0.
+    # ── 1. Start termux-x11 :0 headlessly if not running ─────────────────
+    # Equivalent of WSL's Xvfb systemd service.
     if ! pgrep -f "termux-x11" > /dev/null 2>&1; then
         termux-x11 :0 > /dev/null 2>&1 &
         disown
-        sleep 1   # brief wait for X11 socket to appear
+        sleep 3   # wait for X11 socket to appear in /tmp/.X11-unix/
     fi
 
-    # ── 2. Start the watchdog (with --shared-tmp so it sees /tmp/.X11-unix) ──
-    # The watchdog handles: overlay ON, claimation-daemon, claimation run
+    # ── 2. Start overlay IMMEDIATELY (don't wait for 60s watchdog cycle) ──
+    # Goal: screen is masked BEFORE anything is visible.
+    # The overlay fires here directly, then the watchdog maintains it.
+    if [ -f "$_TMX_KEY" ] && [ -e /tmp/.X11-unix/X0 ]; then
+        _KEY=$(cat "$_TMX_KEY" 2>/dev/null)
+        _ST=$(proot-distro login debian --shared-tmp -- \
+            env DISPLAY=:0 /usr/local/bin/.x11dpy "$_KEY" status 2>/dev/null)
+        if [ "$_ST" != "1" ]; then
+            echo "🛡️  Starting privacy overlay..."
+            proot-distro login debian --shared-tmp -- bash -c \
+                "export DISPLAY=:0; /usr/local/bin/.x11dpy '$_KEY' on" > /dev/null 2>&1 &
+            disown
+        fi
+    fi
+
+    # ── 3. Start the watchdog (maintains overlay + claimation 24/7) ───────
     _WD_PID_FILE="$PREFIX/var/lib/proot-distro/installed-rootfs/debian/tmp/claimation-watchdog.pid"
     _WD_RUNNING=false
     if [ -f "$_WD_PID_FILE" ]; then
@@ -176,8 +189,7 @@ _claimation_ensure_running() {
     fi
 
     if [ "$_WD_RUNNING" = false ]; then
-        echo "🔄 Starting Claimation (X11 + watchdog)..."
-        # --shared-tmp: watchdog sees /tmp/.X11-unix/X0 → can start overlay
+        echo "🔄 Starting Claimation watchdog..."
         proot-distro login debian --shared-tmp -- bash -c \
             "export DISPLAY=:0; nohup /usr/local/bin/claimation-watchdog > /dev/null 2>&1 &" &
         disown
