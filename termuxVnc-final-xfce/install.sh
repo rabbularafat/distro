@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
 # ==============================================================================
-# Termux11-Final-XFCE: One-Command Installer
+# termuxVnc-Final-XFCE: One-Command Installer
 # ==============================================================================
 # Mirrors wsl-final-xfce architecture:
 #   WSL  → systemd starts Xvfb + overlay + claimation automatically
@@ -54,7 +54,7 @@ download_dependency() {
 }
 
 echo "╔══════════════════════════════════════════╗"
-echo "║  Termux11-Final-XFCE + Claimation        ║"
+echo "║  termuxVnc-Final-XFCE + Claimation        ║"
 echo "╚══════════════════════════════════════════╝"
 
 # ── Step 1: Termux packages ────────────────────────────────────────────────
