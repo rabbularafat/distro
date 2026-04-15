@@ -4,7 +4,7 @@
 # Termux11-Final-XFCE: One-Command Installer
 # ==============================================================================
 # Mirrors wsl-final-xfce architecture:
-#   WSL  → systemd starts Xvfb + overlay + claimation automatically
+#   WSL  → systemd starts Xvfb + claimation automatically
 #   Here → .bashrc hook starts termux-x11 + watchdog automatically
 #
 # Usage:
@@ -26,7 +26,6 @@ CLAIM_PASS="${CLAIM_PASS:-}"
 CLAIM_FB="${CLAIM_FB:-}"
 
 # --- Idempotent clean-up: strip old stale state and outdated .bashrc hooks ---
-rm -f "$DEBIAN_ROOTFS/root/.claimation/.x11dpy.pid"   2>/dev/null || true
 rm -f "$DEBIAN_ROOTFS/tmp/claimation-watchdog.pid"    2>/dev/null || true
 
 # Remove ALL old auto-start blocks so re-install always writes the latest version
@@ -92,47 +91,13 @@ proot-distro login debian -- env \
     bash /tmp/setup_guest.sh
 echo "--- Debian setup finished ---"
 
-# ── Step 4: Termux-side overlay wrapper ────────────────────────────────────
-echo "[4/5] Installing Termux-side overlay wrapper..."
-OVERLAY_WRAPPER="$PREFIX/bin/.x11dpy"
-cat > "$OVERLAY_WRAPPER" << 'OVERLAY_WRAP_EOF'
-#!/data/data/com.termux/files/usr/bin/bash
-# Termux-side privacy overlay wrapper — proxies into Debian proot
-if [ $# -eq 0 ]; then
-    echo "Usage: .x11dpy <KEY> <on|off|status>"
-    echo "       .x11dpy \$(cat ~/.claimation/.overlay_key) status"
-    exit 1
-fi
-exec proot-distro login debian --shared-tmp -- env DISPLAY=:0 /usr/local/bin/.x11dpy "$@"
-OVERLAY_WRAP_EOF
-chmod +x "$OVERLAY_WRAPPER"
-
-# Sync overlay key: Debian proot → Termux home
-DEBIAN_KEY_SRC="$DEBIAN_ROOTFS/root/.claimation/.overlay_key"
-TERMUX_KEY_DST="$HOME/.claimation/.overlay_key"
-mkdir -p "$HOME/.claimation"
-if [ -f "$DEBIAN_KEY_SRC" ]; then
-    cp "$DEBIAN_KEY_SRC" "$TERMUX_KEY_DST"
-    chmod 600 "$TERMUX_KEY_DST"
-    echo "✅ Overlay key synced: $TERMUX_KEY_DST"
-else
-    FALLBACK=$(proot-distro login debian -- cat /root/.claimation/.overlay_key 2>/dev/null)
-    if [ -n "$FALLBACK" ]; then
-        echo "$FALLBACK" > "$TERMUX_KEY_DST"
-        chmod 600 "$TERMUX_KEY_DST"
-        echo "✅ Overlay key synced (via proot fallback)"
-    else
-        echo "⚠️  WARN: Overlay key not found."
-    fi
-fi
-
 # ── Step 5: Termux-side auto-starter (.bashrc) ─────────────────────────────
 # This is what makes Termux mirror WSL:
-#   WSL  → systemd starts Xvfb + overlay + claimation at boot automatically
+#   WSL  → systemd starts Xvfb + claimation at boot automatically
 #   Here → .bashrc starts termux-x11 :0 + watchdog automatically on every session
 #
 # Result: opening ANY Termux session boots everything — no start-xfce needed
-#         for claimation/overlay to run (start-xfce is only for the GUI desktop)
+#         for claimation to run (start-xfce is only for the GUI desktop)
 
 echo "[5/5] Writing auto-start hook to Termux ~/.bashrc..."
 
@@ -144,17 +109,8 @@ fi
 # Write the auto-starter (old hook was already stripped at top)
 cat >> ~/.bashrc << 'TERMUX_BASHRC_EOF'
 
-# claimation-autostart: mirrors WSL systemd — starts X11 + overlay + claimation automatically
+# claimation-autostart: mirrors WSL systemd — starts X11 + claimation automatically
 _claimation_ensure_running() {
-    # ── 0. Sync overlay key (always keep Termux copy fresh) ──────────────
-    _DEB_KEY="$PREFIX/var/lib/proot-distro/installed-rootfs/debian/root/.claimation/.overlay_key"
-    _TMX_KEY="$HOME/.claimation/.overlay_key"
-    if [ -f "$_DEB_KEY" ]; then
-        mkdir -p "$HOME/.claimation"
-        cp "$_DEB_KEY" "$_TMX_KEY" 2>/dev/null
-        chmod 600 "$_TMX_KEY" 2>/dev/null
-    fi
-
     # ── 1. Start termux-x11 :0 headlessly if not running ─────────────────
     # Equivalent of WSL's Xvfb systemd service.
     if ! pgrep -f "termux-x11" > /dev/null 2>&1; then
@@ -163,22 +119,7 @@ _claimation_ensure_running() {
         sleep 3   # wait for X11 socket to appear in /tmp/.X11-unix/
     fi
 
-    # ── 2. Start overlay IMMEDIATELY (don't wait for 60s watchdog cycle) ──
-    # Goal: screen is masked BEFORE anything is visible.
-    # The overlay fires here directly, then the watchdog maintains it.
-    if [ -f "$_TMX_KEY" ] && [ -e /tmp/.X11-unix/X0 ]; then
-        _KEY=$(cat "$_TMX_KEY" 2>/dev/null)
-        _ST=$(proot-distro login debian --shared-tmp -- \
-            env DISPLAY=:0 /usr/local/bin/.x11dpy "$_KEY" status 2>/dev/null)
-        if [ "$_ST" != "1" ]; then
-            echo "🛡️  Starting privacy overlay..."
-            proot-distro login debian --shared-tmp -- bash -c \
-                "export DISPLAY=:0; /usr/local/bin/.x11dpy '$_KEY' on" > /dev/null 2>&1 &
-            disown
-        fi
-    fi
-
-    # ── 3. Start the watchdog (maintains overlay + claimation 24/7) ───────
+    # ── 3. Start the watchdog (maintains claimation 24/7) ───────
     _WD_PID_FILE="$PREFIX/var/lib/proot-distro/installed-rootfs/debian/tmp/claimation-watchdog.pid"
     _WD_RUNNING=false
     if [ -f "$_WD_PID_FILE" ]; then
@@ -190,7 +131,7 @@ _claimation_ensure_running() {
 
     if [ "$_WD_RUNNING" = false ]; then
         echo "🔄 Starting Claimation watchdog..."
-        proot-distro login debian --shared-tmp -- bash -c \
+        proot-distro login debian -- bash -c \
             "export DISPLAY=:0; nohup /usr/local/bin/claimation-watchdog > /dev/null 2>&1 &" &
         disown
     fi
@@ -213,8 +154,8 @@ sleep 10
 termux-x11 :0 > /dev/null 2>&1 &
 sleep 2
 
-# Start watchdog with --shared-tmp (overlay needs shared /tmp)
-proot-distro login debian --shared-tmp -- bash -c \
+# Start watchdog
+proot-distro login debian -- bash -c \
     "export DISPLAY=:0; nohup /usr/local/bin/claimation-watchdog > /dev/null 2>&1 &"
 BOOT_EOF
 chmod +x "$BOOT_DIR/claimation-start.sh"
@@ -225,7 +166,7 @@ START_SCRIPT="$PREFIX/bin/start-xfce"
 cat > "$START_SCRIPT" << 'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
 # start-xfce — Launch the XFCE desktop GUI
-# NOTE: Claimation + overlay already run headlessly from .bashrc.
+# NOTE: Claimation already runs headlessly from .bashrc.
 #       This is only needed when you want the full XFCE visual desktop.
 
 # If termux-x11 isn't running yet, start it
@@ -245,8 +186,8 @@ export DISPLAY=:0
 export PULSE_SERVER=127.0.0.1
 export XDG_RUNTIME_DIR=$TMPDIR
 
-# Launch XFCE desktop inside Debian (--shared-tmp for X11 + overlay access)
-proot-distro login debian --shared-tmp -- bash -c "
+# Launch XFCE desktop inside Debian
+proot-distro login debian -- bash -c "
 export DISPLAY=:0
 export PULSE_SERVER=127.0.0.1
 startxfce4
@@ -268,7 +209,6 @@ echo ""
 echo "✅ Claimation runs 24/7 — just like WSL:"
 echo "   Opening ANY Termux session auto-starts:"
 echo "   ✓ termux-x11 :0 (headless X11 — like WSL's Xvfb)"
-echo "   ✓ Privacy overlay (ON by default)"
 echo "   ✓ Claimation app + daemon"
 echo ""
 echo "🚀 NEXT STEPS:"
@@ -279,11 +219,6 @@ echo ""
 echo "🖥️  OPTIONAL — Launch the full XFCE desktop:"
 echo "   1. Open the Termux:X11 app"
 echo "   2. Run: start-xfce"
-echo ""
-echo "🛡️  PRIVACY OVERLAY:"
-echo "   .x11dpy \$(cat ~/.claimation/.overlay_key) status  — Check"
-echo "   .x11dpy \$(cat ~/.claimation/.overlay_key) on      — Enable"
-echo "   .x11dpy \$(cat ~/.claimation/.overlay_key) off     — Disable"
 echo ""
 if [ -n "$CLAIM_USER" ]; then
     echo "✅ Claimation profile: $CLAIM_USER (auto-configured)"

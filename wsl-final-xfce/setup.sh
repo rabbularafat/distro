@@ -26,7 +26,6 @@ bash "$SCRIPTS_DIR/02-xfce.sh"
 bash "$SCRIPTS_DIR/03-xrdp.sh"
 bash "$SCRIPTS_DIR/04-wsl.sh"
 bash "$SCRIPTS_DIR/05-claimation.sh"
-bash "$SCRIPTS_DIR/06-overlay.sh"
 
 echo ""
 echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
