@@ -17,10 +17,11 @@ cat > ~/.xsession << 'XSESSION_EOF'
 xhost +local: >/dev/null 2>&1
 
 # Load display mode preference
-[ -f ~/.display_mode ] && source ~/.display_mode
+[ -f ~/.env ] && source ~/.env
+CLAIM_MODE="${CLAIM_MODE:-HEADLESS}"
 
 # If in DEVELOPMENT mode, hijack the display for GUI apps
-if [ "$MODE" = "DEVELOPMENT" ]; then
+if [ "$CLAIM_MODE" = "DEVELOPMENT" ]; then
     # Inject the XRDP display into systemd user environment
     systemctl --user set-environment DISPLAY=$DISPLAY
     systemctl --user set-environment XAUTHORITY=$XAUTHORITY
@@ -84,5 +85,14 @@ OVERRIDE_EOF
 # Pre-enable Xvfb via symlink (systemd may not be running yet)
 mkdir -p ~/.config/systemd/user/default.target.wants
 ln -sf ~/.config/systemd/user/xvfb.service ~/.config/systemd/user/default.target.wants/xvfb.service 2>/dev/null || true
+
+# Initialize .env if it doesn't exist
+if [ ! -f ~/.env ]; then
+    log_info "Initializing .env with default CLAIM_MODE=HEADLESS..."
+    echo "CLAIM_MODE=HEADLESS" > ~/.env
+fi
+
+# Final enforcement based on current/default mode
+enforce_display_mode
 
 log_success "XRDP + Xvfb configuration complete."

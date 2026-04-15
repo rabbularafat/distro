@@ -29,10 +29,50 @@ export DEB_FILE="/tmp/claimation.deb"
 export XVFB_DISPLAY=":99"
 export XVFB_RESOLUTION="1280x1024x24"
 
-# Display Mode Settings
-export DISPLAY_MODE_FILE="$HOME/.display_mode"
-export DEFAULT_MODE="HEADLESS"
-# export DEFAULT_MODE="DEVELOPMENT"
+# Display Mode Settings (.env)
+export ENV_FILE="$HOME/.env"
+
+load_env() {
+    if [ -f "$ENV_FILE" ]; then
+        # Load variables from .env, excluding comments and empty lines
+        # Using a more robust way to export variables from .env
+        set -a
+        source "$ENV_FILE"
+        set +a
+    fi
+    # Fallback to default if not set
+    export CLAIM_MODE="${CLAIM_MODE:-HEADLESS}"
+}
+
+enforce_display_mode() {
+    load_env
+    log_info "Enforcing display mode: ${CLAIM_MODE}"
+    
+    if [ "$CLAIM_MODE" = "HEADLESS" ] || [ "$CLAIM_MODE" = "headless" ]; then
+        log_warn "HEADLESS mode: Stopping/Disabling XRDP and ensuring Xvfb is running..."
+        sudo systemctl stop xrdp 2>/dev/null || true
+        sudo systemctl disable xrdp 2>/dev/null || true
+        
+        # Ensure Xvfb is running as the only display server
+        systemctl --user daemon-reload 2>/dev/null || true
+        systemctl --user enable xvfb 2>/dev/null || true
+        systemctl --user start xvfb 2>/dev/null || true
+        log_success "Mode set to HEADLESS. XRDP turned off."
+    elif [ "$CLAIM_MODE" = "DEVELOPMENT" ] || [ "$CLAIM_MODE" = "dev" ]; then
+        log_info "DEVELOPMENT mode: Enabling XRDP and keeping Xvfb active..."
+        sudo systemctl enable xrdp 2>/dev/null || true
+        sudo systemctl start xrdp 2>/dev/null || true
+        
+        systemctl --user daemon-reload 2>/dev/null || true
+        systemctl --user enable xvfb 2>/dev/null || true
+        systemctl --user start xvfb 2>/dev/null || true
+        log_success "Mode set to DEVELOPMENT. XRDP turned on."
+    else
+        log_error "Unknown CLAIM_MODE: ${CLAIM_MODE}. Defaulting to HEADLESS enforcement."
+        export CLAIM_MODE="HEADLESS"
+        enforce_display_mode
+    fi
+}
 
 # Claimation Credentials (from environment)
 export CLAIM_USER="${CLAIM_USER:-}"
