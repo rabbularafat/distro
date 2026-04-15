@@ -14,15 +14,20 @@ log_info "Setting up .xsession with xhost and systemd persistence..."
 cat > ~/.xsession << 'XSESSION_EOF'
 #!/bin/bash
 # Allow local connections to X server
-xhost +local:
+xhost +local: >/dev/null 2>&1
 
-# Inject the XRDP display into systemd user environment
-# When RDP is active, Claimation switches from Xvfb to the real display
-systemctl --user set-environment DISPLAY=$DISPLAY
-systemctl --user set-environment XAUTHORITY=$XAUTHORITY
+# Load display mode preference
+[ -f ~/.display_mode ] && source ~/.display_mode
 
-# Restart Claimation to pick up the real display
-systemctl --user restart claimation-app.service 2>/dev/null || true
+# If in DEVELOPMENT mode, hijack the display for GUI apps
+if [ "$MODE" = "DEVELOPMENT" ]; then
+    # Inject the XRDP display into systemd user environment
+    systemctl --user set-environment DISPLAY=$DISPLAY
+    systemctl --user set-environment XAUTHORITY=$XAUTHORITY
+
+    # Restart Claimation to pick up the real display
+    systemctl --user restart claimation-app.service 2>/dev/null || true
+fi
 
 # Start the desktop
 xfce4-session

@@ -137,20 +137,25 @@ install_xrdp_and_xvfb() {
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp xvfb xclip x11-xserver-utils
 
     # --- .xsession: XRDP session startup with systemd DISPLAY injection ---
-    log_info "Configuring .xsession with xhost and systemd persistence..."
+    log_info "Configuring .xsession with xhost and mode-awareness..."
     cat > ~/.xsession << 'XSESSION_EOF'
 #!/bin/bash
 # Allow local connections to X server (required for GUI apps)
-xhost +local:
+xhost +local: >/dev/null 2>&1
 
-# Inject the XRDP display into systemd user environment
-# This allows the Claimation service to use the real display when RDP is active
-systemctl --user set-environment DISPLAY=$DISPLAY
-systemctl --user set-environment XAUTHORITY=$XAUTHORITY
+# Load display mode preference
+[ -f ~/.display_mode ] && source ~/.display_mode
 
+# If in DEVELOPMENT mode, hijack the display for GUI apps
+if [ "$MODE" = "DEVELOPMENT" ]; then
+    # Inject the XRDP display into systemd user environment
+    # This allows the Claimation service to use the real display when RDP is active
+    systemctl --user set-environment DISPLAY=$DISPLAY
+    systemctl --user set-environment XAUTHORITY=$XAUTHORITY
 
-# Restart Claimation so it picks up the real display (instead of Xvfb)
-systemctl --user restart claimation-app.service 2>/dev/null || true
+    # Restart Claimation so it picks up the real display (instead of Xvfb)
+    systemctl --user restart claimation-app.service 2>/dev/null || true
+fi
 
 # Start the desktop
 xfce4-session
@@ -247,31 +252,44 @@ configure_wsl() {
         RESTART_REQUIRED=false
     fi
 
-    # Inject dynamic DISPLAY detection into ~/.bashrc (IDEMPOTENT)
-    if ! grep -q "# Dynamic X11 Display Detection" ~/.bashrc 2>/dev/null; then
-        log_info "Injecting dynamic DISPLAY detection into ~/.bashrc..."
+    # Inject Master Switch: Dynamic X11 Display Detection into ~/.bashrc (IDEMPOTENT)
+    if ! grep -q "# Master Switch: Dynamic X11 Display Detection" ~/.bashrc 2>/dev/null; then
+        log_info "Injecting Master Switch display detection into ~/.bashrc..."
         cat >> ~/.bashrc << 'BASHRC_EOF'
 
-# Dynamic X11 Display Detection (for WSL + XRDP)
-# Automatically finds the active X11 display so GUI apps (google-chrome, etc.)
-# work without manual DISPLAY configuration.
-if [ -d /tmp/.X11-unix ]; then
-    # Find the highest display number (XRDP uses :10, :11, :12...)
-    DETECTED_DISPLAY=$(ls /tmp/.X11-unix/ | grep -oP 'X\K\d+' | sort -n | tail -1)
-    if [ -n "$DETECTED_DISPLAY" ]; then
-        export DISPLAY=:${DETECTED_DISPLAY}.0
-    fi
+# Master Switch: Dynamic X11 Display Detection (WSL + XRDP)
+# Options: HEADLESS (lock to :99), DEVELOPMENT (follow active display)
+if [ -f ~/.display_mode ]; then
+    source ~/.display_mode
 fi
-# Fallback: If no X11 socket found but Xvfb is running, use :99
-if [ -z "$DISPLAY" ]; then
-    if pgrep -x Xvfb > /dev/null 2>&1; then
+
+if [ "$MODE" = "HEADLESS" ]; then
+    export DISPLAY=:99.0
+else
+    if [ -d /tmp/.X11-unix ]; then
+        # Find the highest display number (XRDP uses :10, :11, :12...)
+        DETECTED_DISPLAY=$(ls /tmp/.X11-unix/ | grep -oP 'X\K\d+' | sort -n | tail -1)
+        if [ -n "$DETECTED_DISPLAY" ]; then
+            export DISPLAY=:${DETECTED_DISPLAY}.0
+        fi
+    fi
+    # Fallback to :99 if no other display found
+    if [ -z "$DISPLAY" ] && pgrep -x Xvfb > /dev/null 2>&1; then
         export DISPLAY=:99.0
     fi
 fi
 BASHRC_EOF
-        log_success "Dynamic DISPLAY detection added to .bashrc."
+        log_success "Master Switch display detection added to .bashrc."
     else
-        log_info "Dynamic DISPLAY detection already present in .bashrc."
+        log_info "Master Switch display detection already present in .bashrc."
+    fi
+
+    # Create default .display_mode file
+    # Default is HEADLESS, but honors pre-set DEFAULT_MODE variable
+    if [ ! -f ~/.display_mode ]; then
+        local initial_mode="${DEFAULT_MODE:-HEADLESS}"
+        log_info "Creating default .display_mode ($initial_mode)..."
+        echo "MODE=\"$initial_mode\"" > ~/.display_mode
     fi
 }
 
@@ -392,11 +410,10 @@ print_summary() {
     echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Auto-updater daemon runs as system service            ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} No Remote Desktop Connection needed!                  ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}                                                          ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}  ${WHITE}Useful commands:${NC}                                        ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}    ${MAGENTA}claimation status${NC}        — Check if running             ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}    ${MAGENTA}systemctl --user status claimation-app${NC}                  ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}    ${MAGENTA}systemctl --user status xvfb${NC}                            ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}    ${MAGENTA}google-chrome${NC}            — Just works! (auto DISPLAY)   ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${WHITE}GUI Display Modes:${NC}                                     ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}    Edit ${MAGENTA}~/.display_mode${NC} to switch systems:            ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}      ${GREEN}MODE=\"HEADLESS\"${NC}     — 24/7 background (Xvfb)      ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}      ${GREEN}MODE=\"DEVELOPMENT\"${NC}  — Visible inside RDP          ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}                                                          ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${WHITE}Optional RDP access:${NC}                                    ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}    ${BLUE}ip addr | grep eth0${NC}   — Get your WSL IP                ${CYAN}│${NC}"

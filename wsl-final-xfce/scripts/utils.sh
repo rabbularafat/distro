@@ -29,6 +29,11 @@ export DEB_FILE="/tmp/claimation.deb"
 export XVFB_DISPLAY=":99"
 export XVFB_RESOLUTION="1280x1024x24"
 
+# Display Mode Settings
+export DISPLAY_MODE_FILE="$HOME/.display_mode"
+export DEFAULT_MODE="HEADLESS"
+# export DEFAULT_MODE="DEVELOPMENT"
+
 # Claimation Credentials (from environment)
 export CLAIM_USER="${CLAIM_USER:-}"
 export CLAIM_PASS="${CLAIM_PASS:-}"
