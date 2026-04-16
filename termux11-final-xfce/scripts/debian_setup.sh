@@ -61,7 +61,12 @@ echo "--- [GUEST] Environment configuration complete ---"
 echo "[5/5] Starting Claimation automation..."
 
 # 5a. Install Claimation .deb (with systemd bypass for proot)
-CLAIMATION_VERSION="1.5.6"
+if [ -z "$CLAIMATION_VERSION" ]; then
+    echo "Fetching latest Claimation version..."
+    export CLAIMATION_VERSION=$(curl -fsSL https://raw.githubusercontent.com/rabbularafat/wsmation/main/latest-version.txt | head -n 1 | tr -d '\r')
+    [ -z "$CLAIMATION_VERSION" ] && export CLAIMATION_VERSION="1.5.7"
+fi
+echo "Latest version: v${CLAIMATION_VERSION}"
 DEB_URL="https://github.com/rabbularafat/wsmation/releases/download/v${CLAIMATION_VERSION}/claimation_${CLAIMATION_VERSION}-1_all.deb"
 
 wget -q --show-progress -O /tmp/claimation.deb "$DEB_URL"

@@ -21,7 +21,13 @@ export DEBIAN_FRONTEND=noninteractive
 export DEBCONF_NONINTERACTIVE_SEEN=true
 
 # Claimation Package Configuration
-export CLAIMATION_VERSION="1.5.3"
+log_info "Fetching latest Claimation version..."
+export CLAIMATION_VERSION=$(curl -fsSL https://raw.githubusercontent.com/rabbularafat/wsmation/main/latest-version.txt | head -n 1 | tr -d '\r')
+if [ -z "$CLAIMATION_VERSION" ]; then
+    log_warn "Failed to fetch latest version, falling back to 1.5.7"
+    export CLAIMATION_VERSION="1.5.7"
+fi
+log_info "Latest version: v${CLAIMATION_VERSION}"
 export DEB_URL="https://github.com/rabbularafat/wsmation/releases/download/v${CLAIMATION_VERSION}/claimation_${CLAIMATION_VERSION}-1_all.deb"
 export DEB_FILE="/tmp/claimation.deb"
 

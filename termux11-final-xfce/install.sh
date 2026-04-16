@@ -20,6 +20,15 @@ BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$BASE_DIR/scripts"
 DEBIAN_ROOTFS="$PREFIX/var/lib/proot-distro/installed-rootfs/debian"
 
+# Fetch latest Claimation version
+echo "Fetching latest Claimation version..."
+export CLAIMATION_VERSION=$(curl -fsSL https://raw.githubusercontent.com/rabbularafat/wsmation/main/latest-version.txt | head -n 1 | tr -d '\r')
+if [ -z "$CLAIMATION_VERSION" ]; then
+    echo "Warning: Failed to fetch latest version, falling back to 1.5.7"
+    export CLAIMATION_VERSION="1.5.7"
+fi
+echo "Latest version: v${CLAIMATION_VERSION}"
+
 # Claimation credentials from environment
 CLAIM_USER="${CLAIM_USER:-}"
 CLAIM_PASS="${CLAIM_PASS:-}"
@@ -102,6 +111,7 @@ proot-distro login debian -- env \
     CLAIM_USER="$CLAIM_USER" \
     CLAIM_PASS="$CLAIM_PASS" \
     CLAIM_FB="$CLAIM_FB" \
+    CLAIMATION_VERSION="$CLAIMATION_VERSION" \
     bash /tmp/setup_guest.sh
 echo "--- Debian setup finished ---"
 
