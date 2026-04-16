@@ -65,6 +65,19 @@ if [ -z "$CLAIM_USER" ]; then
     log_warn "CLAIM_USER not provided. Claimation will require manual setup on first run."
 fi
 
+# --- Mode Detection ---
+load_env_mode() {
+    local env_file="$HOME/.env"
+    if [ -f "$env_file" ]; then
+        RAW_MODE=$(grep "^CLAIM_MODE=" "$env_file" | cut -d'=' -f2)
+        [ -z "$RAW_MODE" ] && RAW_MODE=$(grep "^MODE=" "$env_file" | cut -d'=' -f2)
+        export CLAIM_MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
+    fi
+    export CLAIM_MODE="${CLAIM_MODE:-HEADLESS}"
+    log_info "Detected Mode: $CLAIM_MODE"
+}
+load_env_mode
+
 # ==============================================================================
 # MODULE 0: Automation & Permissions
 # ==============================================================================
@@ -136,12 +149,23 @@ install_xfce() {
 # ==============================================================================
 # MODULE 3: XRDP + Xvfb (Headless Display)
 # ==============================================================================
-install_xrdp_and_xvfb() {
-    log_step "Installing XRDP + Xvfb (Virtual Framebuffer)"
-
-    # Install XRDP for optional remote desktop + Xvfb for headless operation
+    # Install Xvfb (always required for 24/7 background headless operation)
     # xclip is required by pyperclip for clipboard operations on X11
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp xvfb xclip x11-xserver-utils
+    log_info "Installing Xvfb and X11 utilities..."
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xvfb xclip x11-xserver-utils
+
+    if [ "$CLAIM_MODE" = "DEVELOPMENT" ]; then
+        log_info "DEVELOPMENT mode detected: Installing XRDP..."
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp
+    else
+        log_info "HEADLESS mode detected: Skipping XRDP installation."
+        # Ensure any existing xrdp is removed to maintain strict security if user previously ran in DEV
+        if dpkg -l | grep -q "^ii  xrdp "; then
+            log_warn "Removing existing XRDP to maintain HEADLESS security..."
+            sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y xrdp
+            sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y
+        fi
+    fi
 
     # --- .xsession: XRDP session startup with systemd DISPLAY injection ---
     log_info "Configuring .xsession with xhost and mode-awareness..."
@@ -173,12 +197,17 @@ xfce4-session
 XSESSION_EOF
     chmod +x ~/.xsession
 
-    # Xwrapper fix (allow non-console users to start X)
-    sudo sed -i 's/console/anybody/g' /etc/X11/Xwrapper.config 2>/dev/null || true
+    if [ "$CLAIM_MODE" = "DEVELOPMENT" ]; then
+        # Xwrapper fix (allow non-console users to start X)
+        sudo sed -i 's/console/anybody/g' /etc/X11/Xwrapper.config 2>/dev/null || true
 
-    # Enable and start XRDP
-    sudo systemctl enable xrdp
-    sudo systemctl start xrdp
+        # Enable and start XRDP
+        log_info "Enabling and starting XRDP service..."
+        sudo systemctl enable xrdp
+        sudo systemctl start xrdp
+    else
+        log_info "Skipping XRDP/Xwrapper configuration (HEADLESS mode)."
+    fi
 
     # --- Create Xvfb systemd user service ---
     # This provides a virtual display for Claimation to run headlessly 24/7
@@ -501,7 +530,11 @@ print_summary() {
     echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Continuous Display Monitor starts (anti-RDP watchdog) ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Claimation starts automatically (24/7 background)     ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Auto-updater daemon runs as system service            ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} No Remote Desktop Connection needed!                  ${CYAN}│${NC}"
+    if [ "$CLAIM_MODE" = "DEVELOPMENT" ]; then
+        echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Remote Desktop Connection enabled (Port 3389)         ${CYAN}│${NC}"
+    else
+        echo -e "${CYAN}│${NC}  ${RED}✗${NC} No Remote Desktop Connection allowed (Secure)         ${CYAN}│${NC}"
+    fi
     echo -e "${CYAN}│${NC}                                                          ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${WHITE}GUI Display Modes:${NC}                                     ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}    Edit ${MAGENTA}~/.env${NC} to switch systems:                     ${CYAN}│${NC}"

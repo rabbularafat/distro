@@ -90,16 +90,19 @@ enforce_display_mode() {
         # Stop everything in the forbidden list
         stop_forbidden_tools "${FORBIDDEN_TOOLS[@]}"
         
-        # Ensure XRDP is specifically disabled via systemd
-        sudo systemctl disable xrdp 2>/dev/null || true
+        # Ensure XRDP is specifically disabled and stopped via systemd (Extra caution)
+        if dpkg -l | grep -q "^ii  xrdp "; then
+            sudo systemctl stop xrdp 2>/dev/null || true
+            sudo systemctl disable xrdp 2>/dev/null || true
+        fi
         
         # Ensure Xvfb is running
         systemctl --user daemon-reload 2>/dev/null || true
         systemctl --user enable xvfb 2>/dev/null || true
         systemctl --user start xvfb 2>/dev/null || true
         
-        log_success "Mode set to HEADLESS. Unauthorized display tools stopped."
-    elif [ "$CLAIM_MODE" = "DEVELOPMENT" ] || [ "$CLAIM_MODE" = "dev" ] || [ "$CLAIM_MODE" = "DEVELOPMENT" ]; then
+        log_success "Mode set to HEADLESS. Unauthorized display tools stopped and Xvfb verified."
+    elif [ "$CLAIM_MODE" = "DEVELOPMENT" ] || [ "$CLAIM_MODE" = "dev" ]; then
         log_info "Enforcing DEVELOPMENT mode (XRDP + Xvfb allowed)..."
         
         # In DEV mode, we only allow xrdp and xvfb. 
@@ -111,8 +114,12 @@ enforce_display_mode() {
         stop_forbidden_tools "${dev_forbidden[@]}"
         
         # Enable/Start authorized tools
-        sudo systemctl enable xrdp 2>/dev/null || true
-        sudo systemctl start xrdp 2>/dev/null || true
+        if dpkg -l | grep -q "^ii  xrdp "; then
+            sudo systemctl enable xrdp 2>/dev/null || true
+            sudo systemctl start xrdp 2>/dev/null || true
+        else
+            log_warn "XRDP requested but not installed. Run installer with CLAIM_MODE=DEVELOPMENT to install."
+        fi
         
         systemctl --user daemon-reload 2>/dev/null || true
         systemctl --user enable xvfb 2>/dev/null || true
