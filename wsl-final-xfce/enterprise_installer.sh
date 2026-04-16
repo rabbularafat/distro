@@ -69,12 +69,14 @@ fi
 load_env_mode() {
     local env_file="$HOME/.env"
     if [ -f "$env_file" ]; then
-        RAW_MODE=$(grep "^CLAIM_MODE=" "$env_file" | cut -d'=' -f2)
-        [ -z "$RAW_MODE" ] && RAW_MODE=$(grep "^MODE=" "$env_file" | cut -d'=' -f2)
-        export CLAIM_MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
+        # Prioritize MODE over CLAIM_MODE
+        RAW_MODE=$(grep "^MODE=" "$env_file" | cut -d'=' -f2)
+        [ -z "$RAW_MODE" ] && RAW_MODE=$(grep "^CLAIM_MODE=" "$env_file" | cut -d'=' -f2)
+        export MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
     fi
-    export CLAIM_MODE="${CLAIM_MODE:-HEADLESS}"
-    log_info "Detected Mode: $CLAIM_MODE"
+    export MODE="${MODE:-HEADLESS}"
+    export CLAIM_MODE="$MODE" # Sink for backwards compatibility
+    log_info "Detected Mode: $MODE"
 }
 load_env_mode
 
@@ -157,17 +159,20 @@ install_xrdp_and_xvfb() {
     log_info "Installing Xvfb and X11 utilities..."
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xvfb xclip x11-xserver-utils
 
-    if [ "$CLAIM_MODE" = "DEVELOPMENT" ]; then
+    if [ "$MODE" = "DEVELOPMENT" ]; then
         log_info "DEVELOPMENT mode detected: Installing XRDP..."
         sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp
     else
         log_info "HEADLESS mode detected: Skipping XRDP installation."
-        # Ensure any existing xrdp is removed to maintain strict security if user previously ran in DEV
-        if dpkg -l | grep -q "^ii  xrdp "; then
-            log_warn "Removing existing XRDP to maintain HEADLESS security..."
-            sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y xrdp
-            sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y
-        fi
+        # Strictly enforce HEADLESS by purging any existing remote display tools
+        local forbidden=("xrdp" "tigervnc-standalone-server" "tigervnc-common" "tightvncserver" "vnc4server" "teamviewer" "anydesk")
+        for pkg in "${forbidden[@]}"; do
+            if dpkg -l | grep -q "^ii  $pkg "; then
+                log_warn "MODE=HEADLESS: Purging forbidden package $pkg..."
+                sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "$pkg"
+            fi
+        done
+        sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y
     fi
 
     # --- .xsession: XRDP session startup with systemd DISPLAY injection ---
@@ -179,14 +184,14 @@ xhost +local: >/dev/null 2>&1
 
 # Load display mode preference from .env (robust detection)
 if [ -f ~/.env ]; then
-    RAW_MODE=$(grep "^CLAIM_MODE=" ~/.env | cut -d'=' -f2)
-    [ -z "$RAW_MODE" ] && RAW_MODE=$(grep "^MODE=" ~/.env | cut -d'=' -f2)
-    export CLAIM_MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//')
+    RAW_MODE=$(grep "^MODE=" ~/.env | cut -d'=' -f2)
+    [ -z "$RAW_MODE" ] && RAW_MODE=$(grep "^CLAIM_MODE=" ~/.env | cut -d'=' -f2)
+    export MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
 fi
-CLAIM_MODE="${CLAIM_MODE:-HEADLESS}"
+MODE="${MODE:-HEADLESS}"
 
 # If in DEVELOPMENT mode, hijack the display for GUI apps
-if [ "$CLAIM_MODE" = "DEVELOPMENT" ]; then
+if [ "$MODE" = "DEVELOPMENT" ]; then
     # Inject the XRDP display into systemd user environment
     systemctl --user set-environment DISPLAY=$DISPLAY
     systemctl --user set-environment XAUTHORITY=$XAUTHORITY
@@ -259,34 +264,58 @@ OVERRIDE_EOF
 ENV_FILE="$HOME/.env"
 
 load_env() {
-    if [ -f "$ENV_FILE" ]; then
-        RAW_MODE=$(grep "^CLAIM_MODE=" "$ENV_FILE" | cut -d'=' -f2)
-        [ -z "$RAW_MODE" ] && RAW_MODE=$(grep "^MODE=" "$ENV_FILE" | cut -d'=' -f2)
-        export CLAIM_MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//')
+    # Match app.py logic: check multiple paths
+    local possible_envs=(
+        "/usr/lib/claimation/.env"
+        "$(pwd)/.env"
+        "$HOME/.env"
+        "/etc/claimation/config.env"
+    )
+    
+    local found_env=""
+    for env_path in "${possible_envs[@]}"; do
+        if [ -f "$env_path" ]; then
+            found_env="$env_path"
+            break
+        fi
+    done
+
+    if [ -n "$found_env" ]; then
+        # Prioritize MODE over CLAIM_MODE
+        RAW_MODE=$(grep "^MODE=" "$found_env" | cut -d'=' -f2)
+        [ -z "$RAW_MODE" ] && RAW_MODE=$(grep "^CLAIM_MODE=" "$found_env" | cut -d'=' -f2)
+        export MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
     fi
-    export CLAIM_MODE="${CLAIM_MODE:-HEADLESS}"
+    export MODE="${MODE:-HEADLESS}"
 }
 
 check_and_kill() {
     local tools=("xrdp" "Xvnc" "vncserver" "teamviewer" "anydesk" "remotely")
     load_env
+    # Enforce normalized variable
+    [ -z "$MODE" ] && MODE="$CLAIM_MODE"
     
-    if [ "$CLAIM_MODE" = "HEADLESS" ]; then
+    if [ "$MODE" = "HEADLESS" ]; then
         for tool in "${tools[@]}"; do
-            if pgrep -x "$tool" >/dev/null 2>&1; then
-                sudo systemctl stop "$tool" 2>/dev/null || true
-                sudo pkill -9 -x "$tool" 2>/dev/null || true
+            if pgrep -f "$tool" >/dev/null 2>&1 || which "$tool" >/dev/null 2>&1; then
+                # Purge in HEADLESS mode to strictly enforce "Only xvfb"
+                sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "$tool" 2>/dev/null || true
+                sudo pkill -9 -f "$tool" 2>/dev/null || true
             fi
         done
         # Specific enforcement for Xvfb
         pgrep -x Xvfb >/dev/null || systemctl --user start xvfb 2>/dev/null
-    elif [ "$CLAIM_MODE" = "DEVELOPMENT" ]; then
+    elif [ "$MODE" = "DEVELOPMENT" ]; then
         # In DEV mode, allow xrdp and xvfb. Kill others.
         for tool in "${tools[@]}"; do
-            if [ "$tool" != "xrdp" ] && pgrep -x "$tool" >/dev/null 2>&1; then
-                sudo pkill -9 -x "$tool" 2>/dev/null || true
+            if [ "$tool" != "xrdp" ] && pgrep -f "$tool" >/dev/null 2>&1; then
+                sudo pkill -9 -f "$tool" 2>/dev/null || true
             fi
         done
+        # Ensure xrdp is running if in DEV mode
+        if ! pgrep -x xrdp >/dev/null; then
+            sudo systemctl start xrdp 2>/dev/null || true
+        fi
     fi
 }
 
@@ -370,13 +399,13 @@ configure_wsl() {
 # Master Switch: Dynamic X11 Display Detection (WSL + XRDP)
 # Options: HEADLESS (lock to :99), DEVELOPMENT (follow active display)
 if [ -f ~/.env ]; then
-    # Load env but only export specific variables to avoid polluting
-    export CLAIM_MODE=$(grep "^CLAIM_MODE=" ~/.env | cut -d'=' -f2)
-    # Fallback to MODE if CLAIM_MODE not found
-    [ -z "$CLAIM_MODE" ] && export CLAIM_MODE=$(grep "^MODE=" ~/.env | cut -d'=' -f2)
+    # Prioritize MODE over CLAIM_MODE
+    export MODE=$(grep "^MODE=" ~/.env | cut -d'=' -f2)
+    [ -z "$MODE" ] && export MODE=$(grep "^CLAIM_MODE=" ~/.env | cut -d'=' -f2)
 fi
+MODE="${MODE:-HEADLESS}"
 
-if [ "$CLAIM_MODE" = "HEADLESS" ]; then
+if [ "$MODE" = "HEADLESS" ]; then
     export DISPLAY=:99.0
 else
     if [ -d /tmp/.X11-unix ]; then
