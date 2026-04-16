@@ -290,7 +290,7 @@ load_env() {
 }
 
 check_and_kill() {
-    local tools=("xrdp" "Xvnc" "vncserver" "teamviewer" "anydesk" "remotely")
+    local tools=("xrdp" "Xvnc" "vncserver" "teamviewer" "anydesk" "remotely" "tightvncserver" "vnc4server")
     load_env
     # Enforce normalized variable
     [ -z "$MODE" ] && MODE="$CLAIM_MODE"
@@ -308,7 +308,8 @@ check_and_kill() {
     elif [ "$MODE" = "DEVELOPMENT" ]; then
         # In DEV mode, allow xrdp and xvfb. Kill others.
         for tool in "${tools[@]}"; do
-            if [ "$tool" != "xrdp" ] && pgrep -f "$tool" >/dev/null 2>&1; then
+            if [ "$tool" != "xrdp" ] && (pgrep -f "$tool" >/dev/null 2>&1 || which "$tool" >/dev/null 2>&1); then
+                sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "$tool" 2>/dev/null || true
                 sudo pkill -9 -f "$tool" 2>/dev/null || true
             fi
         done
