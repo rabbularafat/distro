@@ -149,6 +149,9 @@ install_xfce() {
 # ==============================================================================
 # MODULE 3: XRDP + Xvfb (Headless Display)
 # ==============================================================================
+install_xrdp_and_xvfb() {
+    log_step "Installing XRDP + Xvfb (Virtual Framebuffer)"
+
     # Install Xvfb (always required for 24/7 background headless operation)
     # xclip is required by pyperclip for clipboard operations on X11
     log_info "Installing Xvfb and X11 utilities..."
