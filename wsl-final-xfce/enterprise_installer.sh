@@ -27,6 +27,14 @@ MAGENTA='\033[0;35m'
 WHITE='\033[1;37m'
 NC='\033[0m'
 
+# --- Logging Functions ---
+log_step()    { echo -e "\n${BLUE}[STEP]${NC} ${CYAN}$1${NC}"; }
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+log_info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
+
+
 # Automate installations (No prompts)
 # NOTE: We use 'sudo DEBIAN_FRONTEND=noninteractive' on each apt call
 # because plain 'export' does NOT survive through sudo.
@@ -48,12 +56,6 @@ DEB_FILE="/tmp/claimation.deb"
 XVFB_DISPLAY=":99"
 XVFB_RESOLUTION="1280x1024x24"
 
-# --- Logging Functions ---
-log_step()    { echo -e "\n${BLUE}[STEP]${NC} ${CYAN}$1${NC}"; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-log_info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # --- Claimation Configuration (from Environment Variables) ---
 CLAIM_USER="${CLAIM_USER:-}"

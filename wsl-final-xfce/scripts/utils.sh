@@ -14,6 +14,14 @@ export CYAN='\033[0;36m'
 export WHITE='\033[1;37m'
 export NC='\033[0m' # No Color
 
+# Logging functions
+log_step()    { echo -e "\n${BLUE}[STEP]${NC} ${CYAN}$1${NC}"; }
+log_info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
+
+
 # Automate installations (No prompts)
 # NOTE: 'export' alone does NOT survive through 'sudo'.
 # Always use: sudo DEBIAN_FRONTEND=noninteractive apt-get ...
@@ -136,26 +144,6 @@ preconfigure_packages() {
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y procps
 }
 
-# Logging functions
-log_step() {
-    echo -e "\n${BLUE}[STEP]${NC} ${CYAN}$1${NC}"
-}
-
-log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
-
-log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
-
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
 
 check_root() {
     if [ "$EUID" -eq 0 ]; then
