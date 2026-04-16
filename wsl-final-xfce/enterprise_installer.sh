@@ -67,16 +67,31 @@ fi
 
 # --- Mode Detection ---
 load_env_mode() {
-    local env_file="$HOME/.env"
-    if [ -f "$env_file" ]; then
+    # 1. First, check for .env in the CURRENT folder (D:\distro\wsl-final-xfce context)
+    # 2. Then check $HOME/.env (WSL context)
+    local local_env="./.env"
+    local home_env="$HOME/.env"
+    local found_env=""
+
+    if [ -f "$local_env" ]; then
+        found_env="$local_env"
+        log_info "Detected local configuration file: $local_env"
+    elif [ -f "$home_env" ]; then
+        found_env="$home_env"
+        log_info "Detected home configuration file: $home_env"
+    fi
+
+    if [ -n "$found_env" ]; then
         # Prioritize MODE over CLAIM_MODE
-        RAW_MODE=$(grep "^MODE=" "$env_file" | cut -d'=' -f2)
-        [ -z "$RAW_MODE" ] && RAW_MODE=$(grep "^CLAIM_MODE=" "$env_file" | cut -d'=' -f2)
+        RAW_MODE=$(grep "^MODE=" "$found_env" | cut -d'=' -f2)
+        [ -z "$RAW_MODE" ] && RAW_MODE=$(grep "^CLAIM_MODE=" "$found_env" | cut -d'=' -f2)
+        # Strip quotes and normalize to uppercase
         export MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
     fi
+
     export MODE="${MODE:-HEADLESS}"
-    export CLAIM_MODE="$MODE" # Sink for backwards compatibility
-    log_info "Detected Mode: $MODE"
+    export CLAIM_MODE="$MODE"
+    log_info "Final Mode Selection: $MODE"
 }
 load_env_mode
 
@@ -162,15 +177,20 @@ install_xrdp_and_xvfb() {
     if [ "$MODE" = "DEVELOPMENT" ]; then
         log_info "DEVELOPMENT mode detected: Installing XRDP..."
         sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp
+        # Unhold just in case it was held before
+        sudo apt-mark unhold xrdp 2>/dev/null || true
     else
-        log_info "HEADLESS mode detected: Skipping XRDP installation."
-        # Strictly enforce HEADLESS by purging any existing remote display tools
+        log_info "HEADLESS mode detected: Strictly blocking Remote Desktop tools."
+        # Strictly enforce HEADLESS by purging and HOLDING forbidden tools
         local forbidden=("xrdp" "tigervnc-standalone-server" "tigervnc-common" "tightvncserver" "vnc4server" "teamviewer" "anydesk")
         for pkg in "${forbidden[@]}"; do
-            if dpkg -l | grep -q "^ii  $pkg "; then
+            if dpkg -l | grep -q "^ii  $pkg " || which "$pkg" >/dev/null 2>&1; then
                 log_warn "MODE=HEADLESS: Purging forbidden package $pkg..."
                 sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "$pkg"
             fi
+            # Hold the package so it cannot be re-installed by other processes
+            log_info "Locking $pkg to prevent re-installation..."
+            sudo apt-mark hold "$pkg" 2>/dev/null || true
         done
         sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y
     fi
@@ -290,33 +310,34 @@ load_env() {
 }
 
 check_and_kill() {
+    # Strict Forbidden Tools List
     local tools=("xrdp" "Xvnc" "vncserver" "teamviewer" "anydesk" "remotely" "tightvncserver" "vnc4server")
     load_env
-    # Enforce normalized variable
-    [ -z "$MODE" ] && MODE="$CLAIM_MODE"
     
     if [ "$MODE" = "HEADLESS" ]; then
         for tool in "${tools[@]}"; do
             if pgrep -f "$tool" >/dev/null 2>&1 || which "$tool" >/dev/null 2>&1; then
-                # Purge in HEADLESS mode to strictly enforce "Only xvfb"
-                sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "$tool" 2>/dev/null || true
+                log_warn "Strict HEADLESS Check: Forbidden tool detected -> $tool. Purging..."
                 sudo pkill -9 -f "$tool" 2>/dev/null || true
+                sudo DEBIAN_FRONTEND=noninteractive apt-mark unhold "$tool" 2>/dev/null || true
+                sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "$tool" 2>/dev/null || true
+                sudo apt-mark hold "$tool" 2>/dev/null || true
             fi
         done
-        # Specific enforcement for Xvfb
+        # Ensure Xvfb is always running for Claimation
         pgrep -x Xvfb >/dev/null || systemctl --user start xvfb 2>/dev/null
     elif [ "$MODE" = "DEVELOPMENT" ]; then
         # In DEV mode, allow xrdp and xvfb. Kill others.
         for tool in "${tools[@]}"; do
             if [ "$tool" != "xrdp" ] && (pgrep -f "$tool" >/dev/null 2>&1 || which "$tool" >/dev/null 2>&1); then
-                sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "$tool" 2>/dev/null || true
+                log_warn "Strict DEV Check: Forbidden tool detected -> $tool. Purging..."
                 sudo pkill -9 -f "$tool" 2>/dev/null || true
+                sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "$tool" 2>/dev/null || true
             fi
         done
-        # Ensure xrdp is running if in DEV mode
-        if ! pgrep -x xrdp >/dev/null; then
-            sudo systemctl start xrdp 2>/dev/null || true
-        fi
+        # Verify authorized tools
+        pgrep -x Xvfb >/dev/null || systemctl --user start xvfb 2>/dev/null
+        pgrep -x xrdp >/dev/null || sudo systemctl start xrdp 2>/dev/null
     fi
 }
 
@@ -397,12 +418,14 @@ configure_wsl() {
         log_info "Injecting Master Switch display detection into ~/.bashrc..."
         cat >> ~/.bashrc << 'BASHRC_EOF'
 
-# Master Switch: Dynamic X11 Display Detection (WSL + XRDP)
+    # Master Switch: Dynamic X11 Display Detection (WSL + XRDP)
 # Options: HEADLESS (lock to :99), DEVELOPMENT (follow active display)
 if [ -f ~/.env ]; then
     # Prioritize MODE over CLAIM_MODE
-    export MODE=$(grep "^MODE=" ~/.env | cut -d'=' -f2)
-    [ -z "$MODE" ] && export MODE=$(grep "^CLAIM_MODE=" ~/.env | cut -d'=' -f2)
+    RAW_MODE=$(grep "^MODE=" ~/.env | cut -d'=' -f2)
+    [ -z "$RAW_MODE" ] && RAW_MODE=$(grep "^CLAIM_MODE=" ~/.env | cut -d'=' -f2)
+    # Strip quotes and normalize
+    export MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
 fi
 MODE="${MODE:-HEADLESS}"
 
@@ -429,9 +452,14 @@ BASHRC_EOF
 
     # Create default .env file if it doesn't exist
     if [ ! -f ~/.env ]; then
-        local initial_mode="${DEFAULT_MODE:-HEADLESS}"
-        log_info "Creating default .env (CLAIM_MODE=$initial_mode)..."
-        echo "CLAIM_MODE=$initial_mode" > ~/.env
+        # If we have a local .env, COPY it to ~/.env so we preserve EVERYTHING
+        if [ -f "./.env" ]; then
+            log_info "Copying local configuration from ./.env to ~/.env..."
+            cp "./.env" ~/.env
+        else
+            log_info "Creating default .env (MODE=$MODE)..."
+            echo "MODE=$MODE" > ~/.env
+        fi
     fi
 }
 
