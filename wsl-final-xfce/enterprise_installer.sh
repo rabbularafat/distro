@@ -67,24 +67,37 @@ fi
 
 # --- Mode Detection ---
 load_env_mode() {
-    # 1. First, check for .env in the CURRENT folder (D:\distro\wsl-final-xfce context)
-    # 2. Then check $HOME/.env (WSL context)
-    local local_env="./.env"
+    # Priority:
+    # 1. Existing shell environment variables (CLAIM_MODE or MODE)
+    # 2. Local .env file (same folder as script)
+    # 3. User home .env (~/.env)
+
+    # Check shell environment first (Highest priority for curl | bash or GitHub Actions)
+    local env_mode="${CLAIM_MODE:-$MODE}"
+    if [ -n "$env_mode" ]; then
+        export MODE=$(echo "$env_mode" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
+        export CLAIM_MODE="$MODE"
+        log_info "Detected Mode from Shell Environment: $MODE"
+        return
+    fi
+
+    local script_env="$(dirname "$0")/.env"
     local home_env="$HOME/.env"
     local found_env=""
 
-    if [ -f "$local_env" ]; then
-        found_env="$local_env"
-        log_info "Detected local configuration file: $local_env"
+    if [ -f "$script_env" ]; then
+        found_env="$script_env"
+        log_info "Detected configuration file in script folder: $script_env"
     elif [ -f "$home_env" ]; then
         found_env="$home_env"
         log_info "Detected home configuration file: $home_env"
     fi
 
     if [ -n "$found_env" ]; then
-        # Prioritize MODE over CLAIM_MODE
-        RAW_MODE=$(grep "^MODE=" "$found_env" | cut -d'=' -f2)
-        [ -z "$RAW_MODE" ] && RAW_MODE=$(grep "^CLAIM_MODE=" "$found_env" | cut -d'=' -f2)
+        # Remove BOM if present and prioritize CLAIM_MODE over MODE
+        local env_content=$(sed '1s/^\xEF\xBB\xBF//' "$found_env")
+        RAW_MODE=$(echo "$env_content" | grep "^CLAIM_MODE=" | cut -d'=' -f2)
+        [ -z "$RAW_MODE" ] && RAW_MODE=$(echo "$env_content" | grep "^MODE=" | cut -d'=' -f2)
         # Strip quotes and normalize to uppercase
         export MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
     fi
@@ -450,16 +463,27 @@ BASHRC_EOF
         log_info "Master Switch display detection already present in .bashrc."
     fi
 
-    # Create default .env file if it doesn't exist
+    # Create or update .env file
     if [ ! -f ~/.env ]; then
-        # If we have a local .env, COPY it to ~/.env so we preserve EVERYTHING
-        if [ -f "./.env" ]; then
-            log_info "Copying local configuration from ./.env to ~/.env..."
-            cp "./.env" ~/.env
+        # Priority:
+        # 1. Environment variables already set
+        # 2. Local .env in the same directory as the installer
+        # 3. Default to HEADLESS
+        if [ -f "$(dirname "$0")/.env" ]; then
+            log_info "Copying configuration from script directory to ~/.env..."
+            cp "$(dirname "$0")/.env" ~/.env
         else
-            log_info "Creating default .env (MODE=$MODE)..."
-            echo "MODE=$MODE" > ~/.env
+            log_info "Creating default .env (CLAIM_MODE=$MODE)..."
+            echo "CLAIM_MODE=$MODE" > ~/.env
         fi
+    else
+        # File exists, but we must ensure the MODE matches the detected/preferred one
+        log_info "Synchronizing CLAIM_MODE to ~/.env..."
+        # Remove existing MODE or CLAIM_MODE lines
+        sed -i '/^MODE=/d' ~/.env
+        sed -i '/^CLAIM_MODE=/d' ~/.env
+        # Append the current one
+        echo "CLAIM_MODE=$MODE" >> ~/.env
     fi
 }
 
@@ -492,6 +516,81 @@ install_claimation() {
         # Fix startup sync fallback (remove the fallback to read-only source path)
         sudo sed -i 's/initial_ext_path = get_extension_source_path()/initial_ext_path = None/' "$APP_PY"
         
+        # Robust load_env_mode logic (Standardization + BOM Fix)
+        log_info "Applying robust load_env_mode logic to app.py..."
+        # We'll use a temporary python script to do the replacement reliably
+        sudo python3 -c '
+import sys
+path = "/usr/lib/claimation/claimation/app.py"
+with open(path, "r") as f: content = f.read()
+import re
+new_func = """def load_env_mode():
+    \"\"\"Load the application mode (HEADLESS/DEVELOPMENT) from .env file.
+    
+    Checks multiple locations and prioritizes the project directory.
+    Supports CLAIM_MODE as the primary key with MODE as fallback.
+    \"\"\"
+    app_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    possible_paths = [
+        os.path.join(app_root, ".env"),
+        os.path.join(os.getcwd(), ".env"),
+        os.path.expanduser("~/.env"),
+        # WSL fallback to Windows project root (common in dev)
+        "/mnt/d/backEnd/claimation/.env",
+        "/etc/claimation/config.env",
+        "/etc/claimation/.env"
+    ]
+    
+    found_path = None
+    env_data = {}
+    
+    for path_str in possible_paths:
+        path = Path(path_str)
+        if path.exists():
+            try:
+                # Use utf-8-sig to automatically handle BOM
+                with open(path, "r", encoding="utf-8-sig") as f:
+                    for line in f:
+                        if \"=\" in line and not line.strip().startswith(\"#\"):
+                            parts = line.strip().split(\"=\", 1)
+                            if len(parts) == 2:
+                                key, val = parts
+                                env_data[key.strip()] = val.strip().strip(\"'\").strip(\"\\\"\")
+                found_path = path_str
+                break
+            except Exception as e:
+                import logging
+                logging.error(f\"Error reading .env at {path}: {e}\")
+
+    # Prioritize environment variables but ENSURE quotes are stripped
+    # Check CLAIM_MODE first as it is our standard
+    import os
+    env_mode = os.environ.get(\"CLAIM_MODE\") or os.environ.get(\"MODE\")
+    if env_mode:
+        env_mode = env_mode.strip().strip(\"'\").strip(\"\\\"\")
+    
+    # Priority: Env Var -> CLAIM_MODE from file -> MODE from file -> Default
+    mode = env_mode or env_data.get(\"CLAIM_MODE\") or env_data.get(\"MODE\") or \"HEADLESS\"
+    
+    if found_path:
+        import logging
+        logging.info(f\"Loaded mode \"\'\"{mode}\"\'\" from {found_path}\")
+    else:
+        # If no file was found, create a default one in CWD ONLY if it is likely a manual run
+        if os.access(os.getcwd(), os.W_OK):
+            try:
+                with open(\".env\", \"w\") as f:
+                    f.write(\"# Claimation Mode (HEADLESS or DEVELOPMENT)\\n\")
+                    f.write(f\"CLAIM_MODE={mode}\\n\")
+                import logging
+                logging.info(f\"Created default .env in {os.getcwd()}\")
+            except Exception:
+                pass
+    
+    return mode.upper(), found_path"""
+content = re.sub(r"def load_env_mode\(\):.*?return mode.upper\(\), found_path", new_func, content, flags=re.DOTALL)
+with open(path, "w") as f: f.write(content)
+'
         log_success "Hotfixes for app.py applied."
     else
         log_warn "Could not find app.py at $APP_PY. Skipping hotfix."
