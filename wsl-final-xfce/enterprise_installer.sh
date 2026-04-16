@@ -34,7 +34,6 @@ log_info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 
-
 # Automate installations (No prompts)
 # NOTE: We use 'sudo DEBIAN_FRONTEND=noninteractive' on each apt call
 # because plain 'export' does NOT survive through sudo.
