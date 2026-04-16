@@ -519,11 +519,19 @@ install_claimation() {
         # Robust load_env_mode logic (Standardization + BOM Fix)
         log_info "Applying robust load_env_mode logic to app.py..."
         # We'll use a temporary python script to do the replacement reliably
-        sudo python3 -c '
+        sudo python3 - << 'EOF'
 import sys
-path = "/usr/lib/claimation/claimation/app.py"
-with open(path, "r") as f: content = f.read()
+import os
 import re
+from pathlib import Path
+
+path = "/usr/lib/claimation/claimation/app.py"
+if not os.path.exists(path):
+    sys.exit(0)
+
+with open(path, "r") as f:
+    content = f.read()
+
 new_func = """def load_env_mode():
     \"\"\"Load the application mode (HEADLESS/DEVELOPMENT) from .env file.
     
@@ -551,46 +559,49 @@ new_func = """def load_env_mode():
                 # Use utf-8-sig to automatically handle BOM
                 with open(path, "r", encoding="utf-8-sig") as f:
                     for line in f:
-                        if \"=\" in line and not line.strip().startswith(\"#\"):
-                            parts = line.strip().split(\"=\", 1)
+                        if "=" in line and not line.strip().startswith("#"):
+                            parts = line.strip().split("=", 1)
                             if len(parts) == 2:
                                 key, val = parts
-                                env_data[key.strip()] = val.strip().strip(\"'\").strip(\"\\\"\")
+                                env_data[key.strip()] = val.strip().strip("'").strip("\\\"")
                 found_path = path_str
                 break
             except Exception as e:
                 import logging
-                logging.error(f\"Error reading .env at {path}: {e}\")
+                logging.error(f"Error reading .env at {path}: {e}")
 
     # Prioritize environment variables but ENSURE quotes are stripped
     # Check CLAIM_MODE first as it is our standard
     import os
-    env_mode = os.environ.get(\"CLAIM_MODE\") or os.environ.get(\"MODE\")
+    env_mode = os.environ.get("CLAIM_MODE") or os.environ.get("MODE")
     if env_mode:
-        env_mode = env_mode.strip().strip(\"'\").strip(\"\\\"\")
+        env_mode = env_mode.strip().strip("'").strip("\\\"")
     
     # Priority: Env Var -> CLAIM_MODE from file -> MODE from file -> Default
-    mode = env_mode or env_data.get(\"CLAIM_MODE\") or env_data.get(\"MODE\") or \"HEADLESS\"
+    mode = env_mode or env_data.get("CLAIM_MODE") or env_data.get("MODE") or "HEADLESS"
     
     if found_path:
         import logging
-        logging.info(f\"Loaded mode \"\'\"{mode}\"\'\" from {found_path}\")
+        logging.info(f"Loaded mode {mode} from {found_path}")
     else:
         # If no file was found, create a default one in CWD ONLY if it is likely a manual run
         if os.access(os.getcwd(), os.W_OK):
             try:
-                with open(\".env\", \"w\") as f:
-                    f.write(\"# Claimation Mode (HEADLESS or DEVELOPMENT)\\n\")
-                    f.write(f\"CLAIM_MODE={mode}\\n\")
+                with open(".env", "w") as f:
+                    f.write("# Claimation Mode (HEADLESS or DEVELOPMENT)\\n")
+                    f.write(f"CLAIM_MODE={mode}\\n")
                 import logging
-                logging.info(f\"Created default .env in {os.getcwd()}\")
+                logging.info(f"Created default .env in {os.getcwd()}")
             except Exception:
                 pass
     
     return mode.upper(), found_path"""
+
 content = re.sub(r"def load_env_mode\(\):.*?return mode.upper\(\), found_path", new_func, content, flags=re.DOTALL)
-with open(path, "w") as f: f.write(content)
-'
+with open(path, "w") as f:
+    f.write(content)
+EOF
+
         log_success "Hotfixes for app.py applied."
     else
         log_warn "Could not find app.py at $APP_PY. Skipping hotfix."
