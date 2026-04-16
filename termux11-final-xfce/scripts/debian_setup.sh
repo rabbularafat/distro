@@ -28,7 +28,9 @@ echo "[2/5] Installing XFCE4, Terminal, Chromium, and GUI tools..."
 apt install sudo nano wget curl xfce4 xfce4-goodies dbus-x11 -y
 apt install chromium fonts-noto-core fonts-noto-color-emoji -y
 # xclip: required by pyperclip for clipboard operations
-apt install xclip x11-xserver-utils -y
+# xvfb: virtual framebuffer for headless GUI
+# xrdp: remote desktop protocol server
+apt install xclip x11-xserver-utils xvfb xrdp -y
 
 # 3. Chromium Sandboxing Fix (proot doesn't support kernel sandboxing)
 echo "[3/5] Configuring Chromium flags for proot support..."
@@ -178,10 +180,16 @@ cat <<'WATCHDOG_EOF' > "$WATCHDOG_PATH"
 #!/bin/bash
 # Claimation Persistence Watchdog (Termux/Proot)
 # Emulates systemd's 'restart-on-failure' behavior
-# This script runs as a background daemon and keeps claimation alive 24/7.
+# Also enforces Display Mode (HEADLESS vs DEVELOPMENT)
 
 PIDFILE="/tmp/claimation-watchdog.pid"
 LOGFILE="/tmp/claimation-watchdog.log"
+UTILS_PATH="/usr/local/bin/utils.sh"
+
+# Load shared utilities for display enforcement
+if [ -f "$UTILS_PATH" ]; then
+    source "$UTILS_PATH"
+fi
 
 # Prevent duplicate watchdog instances
 if [ -f "$PIDFILE" ]; then
@@ -205,16 +213,21 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 while true; do
-    # 1. Check/Start background daemon (updater)
+    # 1. Enforce Display Mode (HEADLESS vs DEVELOPMENT)
+    if [ -n "$(type -t enforce_display_mode)" ]; then
+        enforce_display_mode >> "$LOGFILE" 2>&1
+    fi
+
+    # 2. Check/Start background daemon (updater)
     if ! pgrep -f "claimation.daemon" > /dev/null 2>&1; then
         echo "[$(date)] Starting claimation-daemon..." >> "$LOGFILE"
         claimation-daemon run >> "$LOGFILE" 2>&1 &
     fi
 
-    # 2. Check/Start main app
+    # 3. Check/Start main app
     if ! pgrep -f "claimation run" > /dev/null 2>&1; then
         echo "[$(date)] Starting claimation-app..." >> "$LOGFILE"
-        export DISPLAY=:0
+        # DISPLAY is set by enforce_display_mode
         claimation run --skip-update-check >> "$LOGFILE" 2>&1 &
     fi
     sleep 30

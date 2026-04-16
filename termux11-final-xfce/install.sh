@@ -74,13 +74,27 @@ fi
 # ── Step 3: Run debian_setup.sh inside Debian ──────────────────────────────
 echo "[3/5] Configuring Debian desktop + Claimation..."
 DEBIAN_TMP_SETUP="$DEBIAN_ROOTFS/tmp/setup_guest.sh"
+DEBIAN_TMP_UTILS="$DEBIAN_ROOTFS/usr/local/bin/utils.sh"
+
+# Ensure /usr/local/bin exists in rootfs
+mkdir -p "$DEBIAN_ROOTFS/usr/local/bin"
 
 if [ -f "$SCRIPTS_DIR/debian_setup.sh" ]; then
     cp "$SCRIPTS_DIR/debian_setup.sh" "$DEBIAN_TMP_SETUP"
+    cp "$SCRIPTS_DIR/utils.sh" "$DEBIAN_TMP_UTILS"
 else
     download_dependency "scripts/debian_setup.sh" "$DEBIAN_TMP_SETUP"
+    download_dependency "scripts/utils.sh" "$DEBIAN_TMP_UTILS"
 fi
 chmod +x "$DEBIAN_TMP_SETUP"
+chmod +x "$DEBIAN_TMP_UTILS"
+
+# Initialize .env if it doesn't exist
+if [ ! -f "$HOME/.env" ]; then
+    echo "CLAIM_MODE=HEADLESS" > "$HOME/.env"
+fi
+# Copy .env to debian root (as /root/.env)
+cp "$HOME/.env" "$DEBIAN_ROOTFS/root/.env"
 
 # No --shared-tmp here — X11 not running during install (correct)
 echo "--- Running internal Debian setup ---"
@@ -111,12 +125,21 @@ cat >> ~/.bashrc << 'TERMUX_BASHRC_EOF'
 
 # claimation-autostart: mirrors WSL systemd — starts X11 + claimation automatically
 _claimation_ensure_running() {
-    # ── 1. Start termux-x11 :0 headlessly if not running ─────────────────
-    # Equivalent of WSL's Xvfb systemd service.
-    if ! pgrep -f "termux-x11" > /dev/null 2>&1; then
-        termux-x11 :0 > /dev/null 2>&1 &
-        disown
-        sleep 3   # wait for X11 socket to appear in /tmp/.X11-unix/
+    # ── 0. Load display mode ─────────────────────────────────────────────
+    _CLAIM_MODE="HEADLESS"
+    if [ -f "$HOME/.env" ]; then
+        _RAW_MODE=$(grep "^CLAIM_MODE=" "$HOME/.env" | cut -d'=' -f2 | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//')
+        [ -n "$_RAW_MODE" ] && _CLAIM_MODE="$_RAW_MODE"
+    fi
+
+    # ── 1. Start termux-x11 :0 headlessly if in DEVELOPMENT mode ───────────
+    if [ "$_CLAIM_MODE" = "DEVELOPMENT" ] || [ "$_CLAIM_MODE" = "dev" ]; then
+        if ! pgrep -f "termux-x11" > /dev/null 2>&1; then
+            echo "🖥️ Starting Termux:X11 display..."
+            termux-x11 :0 > /dev/null 2>&1 &
+            disown
+            sleep 3
+        fi
     fi
 
     # ── 3. Start the watchdog (maintains claimation 24/7) ───────
@@ -131,8 +154,8 @@ _claimation_ensure_running() {
 
     if [ "$_WD_RUNNING" = false ]; then
         echo "🔄 Starting Claimation watchdog..."
-        proot-distro login debian -- bash -c \
-            "export DISPLAY=:0; nohup /usr/local/bin/claimation-watchdog > /dev/null 2>&1 &" &
+        # The watchdog inside Debian will now handle Xvfb vs Termux:X11 internal DISPLAY assignment
+        proot-distro login debian -- bash -c "nohup /usr/local/bin/claimation-watchdog > /dev/null 2>&1 &" &
         disown
     fi
 }
@@ -150,13 +173,21 @@ cat > "$BOOT_DIR/claimation-start.sh" << 'BOOT_EOF'
 termux-wake-lock
 sleep 10
 
-# Start X11 headlessly
-termux-x11 :0 > /dev/null 2>&1 &
-sleep 2
+# Load display mode
+_CLAIM_MODE="HEADLESS"
+if [ -f "$HOME/.env" ]; then
+    _RAW_MODE=$(grep "^CLAIM_MODE=" "$HOME/.env" | cut -d'=' -f2 | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//')
+    [ -n "$_RAW_MODE" ] && _CLAIM_MODE="$_RAW_MODE"
+fi
 
-# Start watchdog
-proot-distro login debian -- bash -c \
-    "export DISPLAY=:0; nohup /usr/local/bin/claimation-watchdog > /dev/null 2>&1 &"
+# Start X11 headlessly ONLY if in DEVELOPMENT mode
+if [ "$_CLAIM_MODE" = "DEVELOPMENT" ] || [ "$_CLAIM_MODE" = "dev" ]; then
+    termux-x11 :0 > /dev/null 2>&1 &
+    sleep 2
+fi
+
+# Start watchdog (it will handle Xvfb vs Termux:X11 internally)
+proot-distro login debian -- bash -c "nohup /usr/local/bin/claimation-watchdog > /dev/null 2>&1 &"
 BOOT_EOF
 chmod +x "$BOOT_DIR/claimation-start.sh"
 echo "✅ Termux:Boot script: $BOOT_DIR/claimation-start.sh"
@@ -188,6 +219,21 @@ export XDG_RUNTIME_DIR=$TMPDIR
 
 # Launch XFCE desktop inside Debian
 proot-distro login debian -- bash -c "
+# Load display mode to warn user
+_CLAIM_MODE=\"HEADLESS\"
+if [ -f \"/root/.env\" ]; then
+    _RAW_MODE=\$(grep \"^CLAIM_MODE=\" \"/root/.env\" | cut -d'=' -f2 | sed 's/^[^\"]*[\"]//;s/[\"][^\"]*\$//;s/^[^\']*[\']//;s/[\'][^\']*\$//')
+    [ -n \"\$_RAW_MODE\" ] && _CLAIM_MODE=\"\$_RAW_MODE\"
+fi
+
+if [ \"\$_CLAIM_MODE\" = \"HEADLESS\" ]; then
+    echo \"⚠️  WARNING: System is in HEADLESS mode.\"
+    echo \"   Watchdog will kill Termux:X11 display periodically.\"
+    echo \"   To use GUI, set CLAIM_MODE=DEVELOPMENT in ~/.env and restart.\"
+    echo \"\"
+    sleep 2
+fi
+
 export DISPLAY=:0
 export PULSE_SERVER=127.0.0.1
 startxfce4
