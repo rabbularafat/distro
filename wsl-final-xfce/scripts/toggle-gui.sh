@@ -26,8 +26,9 @@ fi
 # Apply the mode changes to system services
 enforce_display_mode
 
-# Restart the service to apply changes immediately
-log_info "Restarting Claimation service to pick up mode change..."
+# Restart monitoring and app services to apply changes immediately
+log_info "Restarting Display Monitor and Claimation service..."
+systemctl --user restart display-monitor.service 2>/dev/null || true
 systemctl --user restart claimation-app.service 2>/dev/null || log_warn "Claimation service not running. Mode will apply on next launch."
 
-log_success "Display mode switch complete."
+log_success "Display mode switched to ${CLAIM_MODE^^}. Watchdog is active."

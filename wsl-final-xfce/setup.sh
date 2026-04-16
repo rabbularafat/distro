@@ -43,6 +43,7 @@ echo -e "${CYAN}┌────────────────────�
 echo -e "${CYAN}│${NC}  ${WHITE}What happens after restart:${NC}                             ${CYAN}│${NC}"
 echo -e "${CYAN}│${NC}                                                          ${CYAN}│${NC}"
 echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Xvfb starts automatically (virtual display :99)       ${CYAN}│${NC}"
+echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Continuous Display Monitor starts (anti-RDP watchdog) ${CYAN}│${NC}"
 echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Claimation starts automatically (24/7 background)     ${CYAN}│${NC}"
 echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Auto-updater daemon runs as system service            ${CYAN}│${NC}"
 echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} No Remote Desktop Connection needed!                  ${CYAN}│${NC}"

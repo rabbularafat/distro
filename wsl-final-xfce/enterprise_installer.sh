@@ -207,14 +207,35 @@ Requires=xvfb.service
 [Service]
 Environment=DISPLAY=${XVFB_DISPLAY}
 OVERRIDE_EOF
+    # --- Create Display Monitor Watchdog service ---
+    log_info "Creating Display Monitor systemd user service..."
+    mkdir -p ~/.config/systemd/user
+    cat > ~/.config/systemd/user/display-monitor.service << MONITOR_EOF
+[Unit]
+Description=Display Mode Monitor Watchdog
+After=network.target
 
-    # Pre-enable services via symlinks (systemd may not be running yet pre-restart)
+[Service]
+Type=simple
+ExecStart=/bin/bash %h/scripts/display-monitor.sh
+Restart=always
+RestartSec=10
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=display-monitor
+
+[Install]
+WantedBy=default.target
+MONITOR_EOF
+
+    # Pre-enable services via symlinks (systemd may not be running yet)
     mkdir -p ~/.config/systemd/user/default.target.wants
     ln -sf ~/.config/systemd/user/xvfb.service ~/.config/systemd/user/default.target.wants/xvfb.service 2>/dev/null || true
+    ln -sf ~/.config/systemd/user/display-monitor.service ~/.config/systemd/user/default.target.wants/display-monitor.service 2>/dev/null || true
     # The claimation-app.service symlink will be created after .deb install
     ln -sf /usr/lib/systemd/user/claimation-app.service ~/.config/systemd/user/default.target.wants/claimation-app.service 2>/dev/null || true
 
-    log_success "XRDP + Xvfb configured."
+    log_success "XRDP + Xvfb + Monitor configured."
 }
 
 # --- Password Encryption Helper ---
@@ -259,11 +280,14 @@ configure_wsl() {
 
 # Master Switch: Dynamic X11 Display Detection (WSL + XRDP)
 # Options: HEADLESS (lock to :99), DEVELOPMENT (follow active display)
-if [ -f ~/.display_mode ]; then
-    source ~/.display_mode
+if [ -f ~/.env ]; then
+    # Load env but only export specific variables to avoid polluting
+    export CLAIM_MODE=$(grep "^CLAIM_MODE=" ~/.env | cut -d'=' -f2)
+    # Fallback to MODE if CLAIM_MODE not found
+    [ -z "$CLAIM_MODE" ] && export CLAIM_MODE=$(grep "^MODE=" ~/.env | cut -d'=' -f2)
 fi
 
-if [ "$MODE" = "HEADLESS" ]; then
+if [ "$CLAIM_MODE" = "HEADLESS" ]; then
     export DISPLAY=:99.0
 else
     if [ -d /tmp/.X11-unix ]; then
@@ -284,12 +308,11 @@ BASHRC_EOF
         log_info "Master Switch display detection already present in .bashrc."
     fi
 
-    # Create default .display_mode file
-    # Default is HEADLESS, but honors pre-set DEFAULT_MODE variable
-    if [ ! -f ~/.display_mode ]; then
+    # Create default .env file if it doesn't exist
+    if [ ! -f ~/.env ]; then
         local initial_mode="${DEFAULT_MODE:-HEADLESS}"
-        log_info "Creating default .display_mode ($initial_mode)..."
-        echo "MODE=\"$initial_mode\"" > ~/.display_mode
+        log_info "Creating default .env (CLAIM_MODE=$initial_mode)..."
+        echo "CLAIM_MODE=$initial_mode" > ~/.env
     fi
 }
 
@@ -406,15 +429,20 @@ print_summary() {
     echo -e "${CYAN}│${NC}  ${WHITE}What happens after restart:${NC}                             ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}                                                          ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Xvfb starts automatically (virtual display :99)       ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Continuous Display Monitor starts (anti-RDP watchdog) ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Claimation starts automatically (24/7 background)     ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Auto-updater daemon runs as system service            ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} No Remote Desktop Connection needed!                  ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}                                                          ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${WHITE}GUI Display Modes:${NC}                                     ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}    Edit ${MAGENTA}~/.display_mode${NC} to switch systems:            ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}      ${GREEN}MODE=\"HEADLESS\"${NC}     — 24/7 background (Xvfb)      ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}      ${GREEN}MODE=\"DEVELOPMENT\"${NC}  — Visible inside RDP          ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}    Edit ${MAGENTA}~/.env${NC} to switch systems:                     ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}      ${GREEN}CLAIM_MODE=\"HEADLESS\"${NC} — 24/7 background (Restricted) ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}      ${GREEN}CLAIM_MODE=\"DEVELOPMENT\"${NC} — Visible inside RDP          ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}                                                          ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${WHITE}Optional RDP access:${NC}                                    ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}    ${BLUE}ip addr | grep eth0${NC}   — Get your WSL IP                ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}    Connect via mstsc with your Linux credentials         ${CYAN}│${NC}"
+    echo -e "${CYAN}└──────────────────────────────────────────────────────────┘${NC}"     ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${WHITE}Optional RDP access:${NC}                                    ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}    ${BLUE}ip addr | grep eth0${NC}   — Get your WSL IP                ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}    Connect via mstsc with your Linux credentials         ${CYAN}│${NC}"

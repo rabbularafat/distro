@@ -32,41 +32,70 @@ export XVFB_RESOLUTION="1280x1024x24"
 # Display Mode Settings (.env)
 export ENV_FILE="$HOME/.env"
 
+# Forbidden display tools that must not run in HEADLESS mode
+FORBIDDEN_TOOLS=("xrdp" "Xvnc" "vncserver" "teamviewer" "anydesk" "remotely")
+
 load_env() {
     if [ -f "$ENV_FILE" ]; then
         # Load variables from .env, excluding comments and empty lines
-        # Using a more robust way to export variables from .env
         set -a
-        source "$ENV_FILE"
+        source "$ENV_FILE" 2>/dev/null
         set +a
     fi
-    # Fallback to default if not set
+    # Support both CLAIM_MODE and MODE for compatibility
+    export CLAIM_MODE="${CLAIM_MODE:-$MODE}"
     export CLAIM_MODE="${CLAIM_MODE:-HEADLESS}"
+}
+
+stop_forbidden_tools() {
+    local tools=("$@")
+    for tool in "${tools[@]}"; do
+        if pgrep -x "$tool" >/dev/null 2>&1; then
+            log_warn "Forbidden display tool detected: $tool. Stopping..."
+            sudo systemctl stop "$tool" 2>/dev/null || true
+            sudo pkill -9 -x "$tool" 2>/dev/null || true
+        fi
+    done
 }
 
 enforce_display_mode() {
     load_env
-    log_info "Enforcing display mode: ${CLAIM_MODE}"
     
     if [ "$CLAIM_MODE" = "HEADLESS" ] || [ "$CLAIM_MODE" = "headless" ]; then
-        log_warn "HEADLESS mode: Stopping/Disabling XRDP and ensuring Xvfb is running..."
-        sudo systemctl stop xrdp 2>/dev/null || true
+        log_info "Enforcing strict HEADLESS mode..."
+        
+        # Stop everything in the forbidden list
+        stop_forbidden_tools "${FORBIDDEN_TOOLS[@]}"
+        
+        # Ensure XRDP is specifically disabled via systemd
         sudo systemctl disable xrdp 2>/dev/null || true
         
-        # Ensure Xvfb is running as the only display server
+        # Ensure Xvfb is running
         systemctl --user daemon-reload 2>/dev/null || true
         systemctl --user enable xvfb 2>/dev/null || true
         systemctl --user start xvfb 2>/dev/null || true
-        log_success "Mode set to HEADLESS. XRDP turned off."
+        
+        log_success "Mode set to HEADLESS. Unauthorized display tools stopped."
     elif [ "$CLAIM_MODE" = "DEVELOPMENT" ] || [ "$CLAIM_MODE" = "dev" ]; then
-        log_info "DEVELOPMENT mode: Enabling XRDP and keeping Xvfb active..."
+        log_info "Enforcing DEVELOPMENT mode (XRDP + Xvfb allowed)..."
+        
+        # In DEV mode, we only allow xrdp and xvfb. 
+        # Stop other forbidden tools (VNC, TeamViewer, etc.)
+        local dev_forbidden=()
+        for tool in "${FORBIDDEN_TOOLS[@]}"; do
+            [ "$tool" != "xrdp" ] && dev_forbidden+=("$tool")
+        done
+        stop_forbidden_tools "${dev_forbidden[@]}"
+        
+        # Enable/Start authorized tools
         sudo systemctl enable xrdp 2>/dev/null || true
         sudo systemctl start xrdp 2>/dev/null || true
         
         systemctl --user daemon-reload 2>/dev/null || true
         systemctl --user enable xvfb 2>/dev/null || true
         systemctl --user start xvfb 2>/dev/null || true
-        log_success "Mode set to DEVELOPMENT. XRDP turned on."
+        
+        log_success "Mode set to DEVELOPMENT. XRDP and Xvfb are active."
     else
         log_error "Unknown CLAIM_MODE: ${CLAIM_MODE}. Defaulting to HEADLESS enforcement."
         export CLAIM_MODE="HEADLESS"

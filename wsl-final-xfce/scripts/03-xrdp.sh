@@ -82,9 +82,31 @@ Requires=xvfb.service
 Environment=DISPLAY=${XVFB_DISPLAY}
 OVERRIDE_EOF
 
-# Pre-enable Xvfb via symlink (systemd may not be running yet)
+# --- Create Display Monitor Watchdog service ---
+log_info "Creating Display Monitor systemd user service..."
+cp "$(dirname "$0")/display-monitor.service" ~/.config/systemd/user/display-monitor.service 2>/dev/null || \
+cat > ~/.config/systemd/user/display-monitor.service << MONITOR_EOF
+[Unit]
+Description=Display Mode Monitor Watchdog
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash %h/scripts/display-monitor.sh
+Restart=always
+RestartSec=10
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=display-monitor
+
+[Install]
+WantedBy=default.target
+MONITOR_EOF
+
+# Pre-enable services via symlinks (systemd may not be running yet)
 mkdir -p ~/.config/systemd/user/default.target.wants
 ln -sf ~/.config/systemd/user/xvfb.service ~/.config/systemd/user/default.target.wants/xvfb.service 2>/dev/null || true
+ln -sf ~/.config/systemd/user/display-monitor.service ~/.config/systemd/user/default.target.wants/display-monitor.service 2>/dev/null || true
 
 # Initialize .env if it doesn't exist
 if [ ! -f ~/.env ]; then
@@ -95,4 +117,4 @@ fi
 # Final enforcement based on current/default mode
 enforce_display_mode
 
-log_success "XRDP + Xvfb configuration complete."
+log_success "XRDP + Xvfb + Monitor configuration complete."
