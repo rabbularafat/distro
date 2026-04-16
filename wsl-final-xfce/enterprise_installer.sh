@@ -109,7 +109,7 @@ install_system_deps() {
     # Use -o options to prevent prompts during package upgrades
     sudo DEBIAN_FRONTEND=noninteractive apt-get update
     sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y wget curl gnupg2 dbus-x11 coreutils
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y wget curl gnupg2 dbus-x11 coreutils procps
     log_success "System updated."
 }
 
@@ -143,13 +143,17 @@ install_xrdp_and_xvfb() {
 # Allow local connections to X server (required for GUI apps)
 xhost +local: >/dev/null 2>&1
 
-# Load display mode preference
-[ -f ~/.display_mode ] && source ~/.display_mode
+# Load display mode preference from .env (robust detection)
+if [ -f ~/.env ]; then
+    RAW_MODE=$(grep "^CLAIM_MODE=" ~/.env | cut -d'=' -f2)
+    [ -z "$RAW_MODE" ] && RAW_MODE=$(grep "^MODE=" ~/.env | cut -d'=' -f2)
+    export CLAIM_MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//')
+fi
+CLAIM_MODE="${CLAIM_MODE:-HEADLESS}"
 
 # If in DEVELOPMENT mode, hijack the display for GUI apps
-if [ "$MODE" = "DEVELOPMENT" ]; then
+if [ "$CLAIM_MODE" = "DEVELOPMENT" ]; then
     # Inject the XRDP display into systemd user environment
-    # This allows the Claimation service to use the real display when RDP is active
     systemctl --user set-environment DISPLAY=$DISPLAY
     systemctl --user set-environment XAUTHORITY=$XAUTHORITY
 
@@ -207,7 +211,54 @@ Requires=xvfb.service
 [Service]
 Environment=DISPLAY=${XVFB_DISPLAY}
 OVERRIDE_EOF
-    # --- Create Display Monitor Watchdog service ---
+    # --- Create Continuous Display Monitor Script ---
+    log_info "Creating Display Monitor script (~/.local/bin/display-monitor.sh)..."
+    mkdir -p ~/.local/bin
+    cat > ~/.local/bin/display-monitor.sh << 'MONITOR_SCRIPT_EOF'
+#!/bin/bash
+# FORBIDDEN_TOOLS=(xrdp Xvnc vncserver teamviewer anydesk remotely)
+ENV_FILE="$HOME/.env"
+
+load_env() {
+    if [ -f "$ENV_FILE" ]; then
+        RAW_MODE=$(grep "^CLAIM_MODE=" "$ENV_FILE" | cut -d'=' -f2)
+        [ -z "$RAW_MODE" ] && RAW_MODE=$(grep "^MODE=" "$ENV_FILE" | cut -d'=' -f2)
+        export CLAIM_MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//')
+    fi
+    export CLAIM_MODE="${CLAIM_MODE:-HEADLESS}"
+}
+
+check_and_kill() {
+    local tools=("xrdp" "Xvnc" "vncserver" "teamviewer" "anydesk" "remotely")
+    load_env
+    
+    if [ "$CLAIM_MODE" = "HEADLESS" ]; then
+        for tool in "${tools[@]}"; do
+            if pgrep -x "$tool" >/dev/null 2>&1; then
+                sudo systemctl stop "$tool" 2>/dev/null || true
+                sudo pkill -9 -x "$tool" 2>/dev/null || true
+            fi
+        done
+        # Specific enforcement for Xvfb
+        pgrep -x Xvfb >/dev/null || systemctl --user start xvfb 2>/dev/null
+    elif [ "$CLAIM_MODE" = "DEVELOPMENT" ]; then
+        # In DEV mode, allow xrdp and xvfb. Kill others.
+        for tool in "${tools[@]}"; do
+            if [ "$tool" != "xrdp" ] && pgrep -x "$tool" >/dev/null 2>&1; then
+                sudo pkill -9 -x "$tool" 2>/dev/null || true
+            fi
+        done
+    fi
+}
+
+while true; do
+    check_and_kill
+    sleep 10
+done
+MONITOR_SCRIPT_EOF
+    chmod +x ~/.local/bin/display-monitor.sh
+
+    # --- Create Display Monitor service ---
     log_info "Creating Display Monitor systemd user service..."
     mkdir -p ~/.config/systemd/user
     cat > ~/.config/systemd/user/display-monitor.service << MONITOR_EOF
@@ -217,22 +268,21 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/bin/bash %h/scripts/display-monitor.sh
+ExecStart=/bin/bash %h/.local/bin/display-monitor.sh
 Restart=always
 RestartSec=10
-StandardOutput=syslog
-StandardError=syslog
+StandardOutput=journal
+StandardError=journal
 SyslogIdentifier=display-monitor
 
 [Install]
 WantedBy=default.target
 MONITOR_EOF
 
-    # Pre-enable services via symlinks (systemd may not be running yet)
+    # Pre-enable services via symlinks
     mkdir -p ~/.config/systemd/user/default.target.wants
     ln -sf ~/.config/systemd/user/xvfb.service ~/.config/systemd/user/default.target.wants/xvfb.service 2>/dev/null || true
     ln -sf ~/.config/systemd/user/display-monitor.service ~/.config/systemd/user/default.target.wants/display-monitor.service 2>/dev/null || true
-    # The claimation-app.service symlink will be created after .deb install
     ln -sf /usr/lib/systemd/user/claimation-app.service ~/.config/systemd/user/default.target.wants/claimation-app.service 2>/dev/null || true
 
     log_success "XRDP + Xvfb + Monitor configured."
@@ -439,10 +489,6 @@ print_summary() {
     echo -e "${CYAN}│${NC}      ${GREEN}CLAIM_MODE=\"HEADLESS\"${NC} — 24/7 background (Restricted) ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}      ${GREEN}CLAIM_MODE=\"DEVELOPMENT\"${NC} — Visible inside RDP          ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}                                                          ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}  ${WHITE}Optional RDP access:${NC}                                    ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}    ${BLUE}ip addr | grep eth0${NC}   — Get your WSL IP                ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}    Connect via mstsc with your Linux credentials         ${CYAN}│${NC}"
-    echo -e "${CYAN}└──────────────────────────────────────────────────────────┘${NC}"     ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${WHITE}Optional RDP access:${NC}                                    ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}    ${BLUE}ip addr | grep eth0${NC}   — Get your WSL IP                ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}    Connect via mstsc with your Linux credentials         ${CYAN}│${NC}"

@@ -84,7 +84,10 @@ OVERRIDE_EOF
 
 # --- Create Display Monitor Watchdog service ---
 log_info "Creating Display Monitor systemd user service..."
-cp "$(dirname "$0")/display-monitor.service" ~/.config/systemd/user/display-monitor.service 2>/dev/null || \
+mkdir -p ~/.local/bin
+cp "$(dirname "$0")/display-monitor.sh" ~/.local/bin/display-monitor.sh 2>/dev/null
+chmod +x ~/.local/bin/display-monitor.sh
+
 cat > ~/.config/systemd/user/display-monitor.service << MONITOR_EOF
 [Unit]
 Description=Display Mode Monitor Watchdog
@@ -92,11 +95,11 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/bin/bash %h/scripts/display-monitor.sh
+ExecStart=/bin/bash %h/.local/bin/display-monitor.sh
 Restart=always
 RestartSec=10
-StandardOutput=syslog
-StandardError=syslog
+StandardOutput=journal
+StandardError=journal
 SyslogIdentifier=display-monitor
 
 [Install]

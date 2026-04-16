@@ -14,14 +14,22 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 if [ "$1" == "headless" ]; then
-    sed -i 's/^CLAIM_MODE=.*/CLAIM_MODE=HEADLESS/' "$ENV_FILE"
-    log_info "Mode set to HEADLESS in $ENV_FILE"
+    NEW_MODE="HEADLESS"
 elif [ "$1" == "dev" ]; then
-    sed -i 's/^CLAIM_MODE=.*/CLAIM_MODE=DEVELOPMENT/' "$ENV_FILE"
-    log_info "Mode set to DEVELOPMENT in $ENV_FILE"
+    NEW_MODE="DEVELOPMENT"
 else
     show_usage
 fi
+
+# Update the .env file robustly
+if grep -q "CLAIM_MODE=" "$ENV_FILE"; then
+    sed -i "s/^CLAIM_MODE=.*/CLAIM_MODE=$NEW_MODE/" "$ENV_FILE"
+elif grep -q "MODE=" "$ENV_FILE"; then
+    sed -i "s/^MODE=.*/CLAIM_MODE=$NEW_MODE/" "$ENV_FILE"
+else
+    echo "CLAIM_MODE=$NEW_MODE" >> "$ENV_FILE"
+fi
+log_info "Mode set to $NEW_MODE in $ENV_FILE"
 
 # Apply the mode changes to system services
 enforce_display_mode

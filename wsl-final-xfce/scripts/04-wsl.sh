@@ -19,11 +19,15 @@ if ! grep -q "# Dynamic X11 Display Detection" ~/.bashrc 2>/dev/null; then
 
 # Master Switch: Dynamic X11 Display Detection (WSL + XRDP)
 # Options: HEADLESS (lock to :99), DEVELOPMENT (follow active display)
-if [ -f ~/.display_mode ]; then
-    source ~/.display_mode
+if [ -f ~/.env ]; then
+    # Load env but only export specific variables to avoid polluting
+    # Using a robust way to strip quotes if they exist
+    RAW_MODE=$(grep "^CLAIM_MODE=" ~/.env | cut -d'=' -f2)
+    [ -z "$RAW_MODE" ] && RAW_MODE=$(grep "^MODE=" ~/.env | cut -d'=' -f2)
+    export CLAIM_MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//')
 fi
 
-if [ "$MODE" = "HEADLESS" ]; then
+if [ "$CLAIM_MODE" = "HEADLESS" ]; then
     export DISPLAY=:99.0
 else
     if [ -d /tmp/.X11-unix ]; then
@@ -34,7 +38,7 @@ else
         fi
     fi
     # Fallback to :99 if no other display found
-    if [ -z "$DISPLAY" ] && pgrep -x Xvfb > /dev/null 2>&1; then
+    if [ -z "$DISPLAY" ] && command -v pgrep >/dev/null && pgrep -x Xvfb > /dev/null 2>&1; then
         export DISPLAY=:99.0
     fi
 fi

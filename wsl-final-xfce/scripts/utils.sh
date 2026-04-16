@@ -42,13 +42,20 @@ load_env() {
         source "$ENV_FILE" 2>/dev/null
         set +a
     fi
-    # Support both CLAIM_MODE and MODE for compatibility
-    export CLAIM_MODE="${CLAIM_MODE:-$MODE}"
-    export CLAIM_MODE="${CLAIM_MODE:-HEADLESS}"
+    # Support both CLAIM_MODE and MODE for compatibility (unify to CLAIM_MODE)
+    local raw_mode="${CLAIM_MODE:-$MODE}"
+    raw_mode="${raw_mode:-HEADLESS}"
+    # Strip leading/trailing quotes (robustness fix)
+    export CLAIM_MODE=$(echo "$raw_mode" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//')
 }
 
 stop_forbidden_tools() {
     local tools=("$@")
+    # Ensure pgrep is available
+    if ! command -v pgrep >/dev/null 2>&1; then
+        log_warn "pgrep not found. Skipping tool check."
+        return
+    fi
     for tool in "${tools[@]}"; do
         if pgrep -x "$tool" >/dev/null 2>&1; then
             log_warn "Forbidden display tool detected: $tool. Stopping..."
@@ -76,7 +83,7 @@ enforce_display_mode() {
         systemctl --user start xvfb 2>/dev/null || true
         
         log_success "Mode set to HEADLESS. Unauthorized display tools stopped."
-    elif [ "$CLAIM_MODE" = "DEVELOPMENT" ] || [ "$CLAIM_MODE" = "dev" ]; then
+    elif [ "$CLAIM_MODE" = "DEVELOPMENT" ] || [ "$CLAIM_MODE" = "dev" ] || [ "$CLAIM_MODE" = "DEVELOPMENT" ]; then
         log_info "Enforcing DEVELOPMENT mode (XRDP + Xvfb allowed)..."
         
         # In DEV mode, we only allow xrdp and xvfb. 
@@ -119,6 +126,8 @@ preconfigure_packages() {
     echo 'tzdata tzdata/Zones/Etc select UTC' | sudo debconf-set-selections
     echo 'locales locales/default_environment_locale select en_US.UTF-8' | sudo debconf-set-selections
     echo 'locales locales/locales_to_be_generated multiselect en_US.UTF-8 UTF-8' | sudo debconf-set-selections
+    # Ensure procps is installed for pgrep/pkill
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y procps
 }
 
 # Logging functions
