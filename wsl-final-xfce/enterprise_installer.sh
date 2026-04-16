@@ -402,9 +402,21 @@ install_claimation() {
         # Fix startup sync fallback (remove the fallback to read-only source path)
         sudo sed -i 's/initial_ext_path = get_extension_source_path()/initial_ext_path = None/' "$APP_PY"
         
-        log_success "Hotfixes applied successfully."
+        log_success "Hotfixes for app.py applied."
     else
         log_warn "Could not find app.py at $APP_PY. Skipping hotfix."
+    fi
+
+    CONFIG_PY="/usr/lib/claimation/claimation/config.py"
+    if [ -f "$CONFIG_PY" ]; then
+        log_info "Applying hotfix for missing APT_REPO_NAME in config.py..."
+        # Add APT_REPO_NAME after USE_APT definition if not already present
+        if ! grep -q "APT_REPO_NAME" "$CONFIG_PY"; then
+            sudo sed -i '/USE_APT = _s\["USE_APT"\]/a APT_REPO_NAME = "claimation"' "$CONFIG_PY"
+            log_success "APT_REPO_NAME hotfix applied."
+        else
+            log_info "APT_REPO_NAME already present."
+        fi
     fi
 
     # 2. Pre-configure Claimation profile (BYPASS interactive setup)
