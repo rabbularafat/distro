@@ -10,6 +10,7 @@
 #   export CLAIM_USER="your_custom_user"
 #   export CLAIM_PASS="your_custom_pass"
 #   export CLAIM_FB="optional_firebase_id"
+#   export MODE="DEVELOPMENT" # optional: DEVELOPMENT or PUBLIC
 #   curl -fsSL https://raw.githubusercontent.com/rabbularafat/distro/main/wsl-final-xfce/enterprise_installer.sh | bash
 #
 # After install: wsl --shutdown  (run from PowerShell, then reopen Debian)
@@ -34,7 +35,7 @@ export DEBIAN_FRONTEND=noninteractive
 export DEBCONF_NONINTERACTIVE_SEEN=true
 
 # Claimation .deb download URL
-CLAIMATION_VERSION="1.5.3"
+CLAIMATION_VERSION="1.6.7"
 DEB_URL="https://github.com/rabbularafat/wsmation/releases/download/v${CLAIMATION_VERSION}/claimation_${CLAIMATION_VERSION}-1_all.deb"
 DEB_FILE="/tmp/claimation.deb"
 
@@ -53,6 +54,8 @@ log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 CLAIM_USER="${CLAIM_USER:-}"
 CLAIM_PASS="${CLAIM_PASS:-}"
 CLAIM_FB="${CLAIM_FB:-}"
+MODE="${MODE:-PUBLIC}"
+DEVICE="${DEVICE:-WSL}"
 
 if [ -z "$CLAIM_USER" ]; then
     log_warn "CLAIM_USER not provided. Claimation will require manual setup on first run."
@@ -113,103 +116,9 @@ install_system_deps() {
     log_success "System updated."
 }
 
-# ==============================================================================
-# MODULE 2: FINAL XFCE4 Desktop Environment
-# ==============================================================================
-install_xfce() {
-    log_step "Installing FINAL XFCE4 Desktop Environment"
-    log_info "This might take a while..."
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-        -o Dpkg::Options::="--force-confdef" \
-        -o Dpkg::Options::="--force-confold" \
-        xfce4 xfce4-goodies
-    log_success "FINAL XFCE4 installed."
-}
+# Modules 2 & 3 (GUI installation) have been moved inside the application package.
+# This ensures faster setup and better security for the core concept.
 
-# ==============================================================================
-# MODULE 3: XRDP + Xvfb (Headless Display)
-# ==============================================================================
-install_xrdp_and_xvfb() {
-    log_step "Installing XRDP + Xvfb (Virtual Framebuffer)"
-
-    # Install XRDP for optional remote desktop + Xvfb for headless operation
-    # xclip is required by pyperclip for clipboard operations on X11
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp xvfb xclip x11-xserver-utils
-
-    # --- .xsession: XRDP session startup with systemd DISPLAY injection ---
-    log_info "Configuring .xsession with xhost and systemd persistence..."
-    cat > ~/.xsession << 'XSESSION_EOF'
-#!/bin/bash
-# Allow local connections to X server (required for GUI apps)
-xhost +local:
-
-# Inject the XRDP display into systemd user environment
-# This allows the Claimation service to use the real display when RDP is active
-systemctl --user set-environment DISPLAY=$DISPLAY
-systemctl --user set-environment XAUTHORITY=$XAUTHORITY
-
-# Restart Claimation so it picks up the real display (instead of Xvfb)
-systemctl --user restart claimation-app.service 2>/dev/null || true
-
-# Start the desktop
-xfce4-session
-XSESSION_EOF
-    chmod +x ~/.xsession
-
-    # Xwrapper fix (allow non-console users to start X)
-    sudo sed -i 's/console/anybody/g' /etc/X11/Xwrapper.config 2>/dev/null || true
-
-    # Enable and start XRDP
-    sudo systemctl enable xrdp
-    sudo systemctl start xrdp
-
-    # --- Create Xvfb systemd user service ---
-    # This provides a virtual display for Claimation to run headlessly 24/7
-    # pyautogui, pyperclip, Chrome — all work on Xvfb as it's a real X11 server
-    log_info "Creating Xvfb systemd user service..."
-    mkdir -p ~/.config/systemd/user
-
-    cat > ~/.config/systemd/user/xvfb.service << XVFB_EOF
-[Unit]
-Description=Xvfb Virtual Framebuffer (Display ${XVFB_DISPLAY})
-Documentation=man:Xvfb(1)
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/Xvfb ${XVFB_DISPLAY} -screen 0 ${XVFB_RESOLUTION} -ac +extension GLX +render -noreset
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-XVFB_EOF
-
-    # --- Override claimation-app.service to depend on Xvfb ---
-    # The .deb package ships /usr/lib/systemd/user/claimation-app.service
-    # We create an override to:
-    #   1. Make it depend on xvfb.service
-    #   2. Set DISPLAY to the Xvfb display as default
-    #   3. When RDP is active, .xsession overrides this with the real display
-    log_info "Creating claimation-app service override..."
-    mkdir -p ~/.config/systemd/user/claimation-app.service.d
-
-    cat > ~/.config/systemd/user/claimation-app.service.d/override.conf << OVERRIDE_EOF
-[Unit]
-After=xvfb.service
-Requires=xvfb.service
-
-[Service]
-Environment=DISPLAY=${XVFB_DISPLAY}
-OVERRIDE_EOF
-
-    # Pre-enable services via symlinks (systemd may not be running yet pre-restart)
-    mkdir -p ~/.config/systemd/user/default.target.wants
-    ln -sf ~/.config/systemd/user/xvfb.service ~/.config/systemd/user/default.target.wants/xvfb.service 2>/dev/null || true
-    # The claimation-app.service symlink will be created after .deb install
-    ln -sf /usr/lib/systemd/user/claimation-app.service ~/.config/systemd/user/default.target.wants/claimation-app.service 2>/dev/null || true
-
-    log_success "XRDP + Xvfb configured."
-}
 
 # --- Password Encryption Helper ---
 # Must match Laravel (PHP) and Claimation (Python) AES-256-CBC logic
@@ -245,33 +154,6 @@ configure_wsl() {
         log_info "Systemd already enabled."
         RESTART_REQUIRED=false
     fi
-
-    # Inject dynamic DISPLAY detection into ~/.bashrc (IDEMPOTENT)
-    if ! grep -q "# Dynamic X11 Display Detection" ~/.bashrc 2>/dev/null; then
-        log_info "Injecting dynamic DISPLAY detection into ~/.bashrc..."
-        cat >> ~/.bashrc << 'BASHRC_EOF'
-
-# Dynamic X11 Display Detection (for WSL + XRDP)
-# Automatically finds the active X11 display so GUI apps (google-chrome, etc.)
-# work without manual DISPLAY configuration.
-if [ -d /tmp/.X11-unix ]; then
-    # Find the highest display number (XRDP uses :10, :11, :12...)
-    DETECTED_DISPLAY=$(ls /tmp/.X11-unix/ | grep -oP 'X\K\d+' | sort -n | tail -1)
-    if [ -n "$DETECTED_DISPLAY" ]; then
-        export DISPLAY=:${DETECTED_DISPLAY}.0
-    fi
-fi
-# Fallback: If no X11 socket found but Xvfb is running, use :99
-if [ -z "$DISPLAY" ]; then
-    if pgrep -x Xvfb > /dev/null 2>&1; then
-        export DISPLAY=:99.0
-    fi
-fi
-BASHRC_EOF
-        log_success "Dynamic DISPLAY detection added to .bashrc."
-    else
-        log_info "Dynamic DISPLAY detection already present in .bashrc."
-    fi
 }
 
 # ==============================================================================
@@ -287,6 +169,16 @@ install_claimation() {
     log_info "Installing Claimation package..."
     sudo dpkg -i "$DEB_FILE" || true
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -f -y
+
+    # Store environment configuration for the app
+    log_step "Persisting application configuration"
+    sudo mkdir -p /etc/claimation
+    cat << EOF | sudo tee /etc/claimation/config.env > /dev/null
+# Environment configuration generated by installer
+MODE="${MODE}"
+DEVICE="${DEVICE}"
+CLAIM_USER="${CLAIM_USER}"
+EOF
 
     # Clean up downloaded .deb
     rm -f "$DEB_FILE"
@@ -385,20 +277,12 @@ print_summary() {
     echo -e "${CYAN}┌──────────────────────────────────────────────────────────┐${NC}"
     echo -e "${CYAN}│${NC}  ${WHITE}What happens after restart:${NC}                             ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}                                                          ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Xvfb starts automatically (virtual display :99)       ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Claimation starts automatically (24/7 background)     ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Claimation will initialize itself (WSL/Termux)        ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Security Monitor active (instantly punishes RDP/VNC)  ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Auto-updater daemon runs as system service            ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} No Remote Desktop Connection needed!                  ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}                                                          ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}  ${WHITE}Useful commands:${NC}                                        ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}    ${MAGENTA}claimation status${NC}        — Check if running             ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}    ${MAGENTA}systemctl --user status claimation-app${NC}                  ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}    ${MAGENTA}systemctl --user status xvfb${NC}                            ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}    ${MAGENTA}google-chrome${NC}            — Just works! (auto DISPLAY)   ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}                                                          ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}  ${WHITE}Optional RDP access:${NC}                                    ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}    ${BLUE}ip addr | grep eth0${NC}   — Get your WSL IP                ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}    Connect via mstsc with your Linux credentials         ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${WHITE}Mode:${NC} ${MAGENTA}${MODE}${NC}                                          ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${WHITE}Device:${NC} ${MAGENTA}${DEVICE}${NC}                                      ${CYAN}│${NC}"
     echo -e "${CYAN}└──────────────────────────────────────────────────────────┘${NC}"
 
     if [ -n "$CLAIM_USER" ]; then
@@ -421,8 +305,6 @@ check_env
 setup_automation_permissions
 preconfigure_keyboard
 install_system_deps
-install_xfce
-install_xrdp_and_xvfb
 configure_wsl
 install_claimation
 print_summary
