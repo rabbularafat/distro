@@ -27,13 +27,6 @@ MAGENTA='\033[0;35m'
 WHITE='\033[1;37m'
 NC='\033[0m'
 
-# --- Logging Functions ---
-log_step()    { echo -e "\n${BLUE}[STEP]${NC} ${CYAN}$1${NC}"; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-log_info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
-
 # Automate installations (No prompts)
 # NOTE: We use 'sudo DEBIAN_FRONTEND=noninteractive' on each apt call
 # because plain 'export' does NOT survive through sudo.
@@ -41,13 +34,7 @@ export DEBIAN_FRONTEND=noninteractive
 export DEBCONF_NONINTERACTIVE_SEEN=true
 
 # Claimation .deb download URL
-log_info "Fetching latest Claimation version..."
-export CLAIMATION_VERSION=$(curl -fsSL https://raw.githubusercontent.com/rabbularafat/wsmation/main/latest-version.txt | head -n 1 | tr -d '\r')
-if [ -z "$CLAIMATION_VERSION" ]; then
-    log_warn "Failed to fetch latest version, falling back to 1.5.7"
-    export CLAIMATION_VERSION="1.5.7"
-fi
-log_info "Latest version: v${CLAIMATION_VERSION}"
+CLAIMATION_VERSION="1.5.3"
 DEB_URL="https://github.com/rabbularafat/wsmation/releases/download/v${CLAIMATION_VERSION}/claimation_${CLAIMATION_VERSION}-1_all.deb"
 DEB_FILE="/tmp/claimation.deb"
 
@@ -55,6 +42,12 @@ DEB_FILE="/tmp/claimation.deb"
 XVFB_DISPLAY=":99"
 XVFB_RESOLUTION="1280x1024x24"
 
+# --- Logging Functions ---
+log_step()    { echo -e "\n${BLUE}[STEP]${NC} ${CYAN}$1${NC}"; }
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+log_info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # --- Claimation Configuration (from Environment Variables) ---
 CLAIM_USER="${CLAIM_USER:-}"
@@ -64,48 +57,6 @@ CLAIM_FB="${CLAIM_FB:-}"
 if [ -z "$CLAIM_USER" ]; then
     log_warn "CLAIM_USER not provided. Claimation will require manual setup on first run."
 fi
-
-# --- Mode Detection ---
-load_env_mode() {
-    # Check shell environment first
-    local env_mode="${CLAIM_MODE:-$MODE}"
-    if [ -n "$env_mode" ]; then
-        export MODE=$(echo "$env_mode" | tr -d '\r' | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
-        export CLAIM_MODE="$MODE"
-        log_info "Detected Mode from Shell Environment: $MODE"
-        return
-    fi
-
-    local possible_envs=(
-        "/etc/claimation/mode.env"
-        "/etc/claimation/.env"
-        "/usr/lib/claimation/.env"
-        "$HOME/.env"
-        "$(pwd)/.env"
-    )
-
-    local found_env=""
-    for env_path in "${possible_envs[@]}"; do
-        if [ -f "$env_path" ]; then
-            found_env="$env_path"
-            # Load variables from .env robustly
-            set -a
-            eval "$(sed 's/^\xEF\xBB\xBF//; s/^#.*//; s/^[[:space:]]*$//' "$found_env" | tr -d '\r' | sed 's/^\([^=]*\)=\(.*\)$/export \1=\2/' | sed 's/=\([^\"]*$\)/="\1"/')"
-            set +a
-            log_info "Detected configuration in: $found_env"
-            break
-        fi
-    done
-
-    # Final normalization
-    local raw_mode="${CLAIM_MODE:-$MODE}"
-    raw_mode="${raw_mode:-HEADLESS}"
-    export MODE=$(echo "$raw_mode" | tr -d '\r' | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
-    export CLAIM_MODE="$MODE"
-    
-    log_info "Final Mode Selection: $MODE"
-}
-load_env_mode
 
 # ==============================================================================
 # MODULE 0: Automation & Permissions
@@ -158,7 +109,7 @@ install_system_deps() {
     # Use -o options to prevent prompts during package upgrades
     sudo DEBIAN_FRONTEND=noninteractive apt-get update
     sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y wget curl gnupg2 dbus-x11 coreutils procps
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y wget curl gnupg2 dbus-x11 coreutils
     log_success "System updated."
 }
 
@@ -181,73 +132,36 @@ install_xfce() {
 install_xrdp_and_xvfb() {
     log_step "Installing XRDP + Xvfb (Virtual Framebuffer)"
 
-    # Stop any existing display monitor to prevent purge-loops during install
-    systemctl --user stop display-monitor.service 2>/dev/null || true
-
-    # Install Xvfb (always required for 24/7 background headless operation)
+    # Install XRDP for optional remote desktop + Xvfb for headless operation
     # xclip is required by pyperclip for clipboard operations on X11
-    log_info "Installing Xvfb and X11 utilities..."
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xvfb xclip x11-xserver-utils
-
-    if [ "$MODE" = "DEVELOPMENT" ]; then
-        log_info "DEVELOPMENT mode detected: Ensuring XRDP and Xvfb..."
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp
-        sudo apt-mark unhold xrdp 2>/dev/null || true
-    else
-        log_info "HEADLESS mode detected: Strictly blocking Remote Desktop tools."
-        local forbidden=("xrdp" "tigervnc-standalone-server" "tigervnc-common" "tightvncserver" "vnc4server" "teamviewer" "anydesk")
-        for pkg in "${forbidden[@]}"; do
-            if dpkg -l | grep -q "^ii  $pkg " || which "$pkg" >/dev/null 2>&1; then
-                log_warn "MODE=HEADLESS: Purging forbidden package $pkg..."
-                sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "$pkg"
-                sudo apt-mark hold "$pkg" 2>/dev/null || true
-            fi
-        done
-        sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y
-    fi
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp xvfb xclip x11-xserver-utils
 
     # --- .xsession: XRDP session startup with systemd DISPLAY injection ---
-    log_info "Configuring .xsession with xhost and mode-awareness..."
+    log_info "Configuring .xsession with xhost and systemd persistence..."
     cat > ~/.xsession << 'XSESSION_EOF'
 #!/bin/bash
 # Allow local connections to X server (required for GUI apps)
-xhost +local: >/dev/null 2>&1
+xhost +local:
 
-# Load display mode preference from .env (robust detection)
-if [ -f ~/.env ]; then
-    # Strip carriage returns and handle both MODE and CLAIM_MODE
-    RAW_MODE=$(tr -d '\r' < ~/.env | grep "^CLAIM_MODE=" | cut -d'=' -f2)
-    [ -z "$RAW_MODE" ] && RAW_MODE=$(tr -d '\r' < ~/.env | grep "^MODE=" | cut -d'=' -f2)
-    export MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
-fi
-MODE="${MODE:-HEADLESS}"
+# Inject the XRDP display into systemd user environment
+# This allows the Claimation service to use the real display when RDP is active
+systemctl --user set-environment DISPLAY=$DISPLAY
+systemctl --user set-environment XAUTHORITY=$XAUTHORITY
 
-# If in DEVELOPMENT mode, hijack the display for GUI apps
-if [ "$MODE" = "DEVELOPMENT" ]; then
-    # Inject the XRDP display into systemd user environment
-    systemctl --user set-environment DISPLAY=$DISPLAY
-    systemctl --user set-environment XAUTHORITY=$XAUTHORITY
-
-    # Restart Claimation so it picks up the real display (instead of Xvfb)
-    systemctl --user restart claimation-app.service 2>/dev/null || true
-fi
+# Restart Claimation so it picks up the real display (instead of Xvfb)
+systemctl --user restart claimation-app.service 2>/dev/null || true
 
 # Start the desktop
 xfce4-session
 XSESSION_EOF
     chmod +x ~/.xsession
 
-    if [ "$CLAIM_MODE" = "DEVELOPMENT" ]; then
-        # Xwrapper fix (allow non-console users to start X)
-        sudo sed -i 's/console/anybody/g' /etc/X11/Xwrapper.config 2>/dev/null || true
+    # Xwrapper fix (allow non-console users to start X)
+    sudo sed -i 's/console/anybody/g' /etc/X11/Xwrapper.config 2>/dev/null || true
 
-        # Enable and start XRDP
-        log_info "Enabling and starting XRDP service..."
-        sudo systemctl enable xrdp
-        sudo systemctl start xrdp
-    else
-        log_info "Skipping XRDP/Xwrapper configuration (HEADLESS mode)."
-    fi
+    # Enable and start XRDP
+    sudo systemctl enable xrdp
+    sudo systemctl start xrdp
 
     # --- Create Xvfb systemd user service ---
     # This provides a virtual display for Claimation to run headlessly 24/7
@@ -287,131 +201,14 @@ Requires=xvfb.service
 [Service]
 Environment=DISPLAY=${XVFB_DISPLAY}
 OVERRIDE_EOF
-    # --- Create Continuous Display Monitor Script ---
-    log_info "Creating Display Monitor script (~/.local/bin/display-monitor.sh)..."
-    mkdir -p ~/.local/bin
-    cat > ~/.local/bin/display-monitor.sh << 'MONITOR_SCRIPT_EOF'
-#!/bin/bash
-# FORBIDDEN_TOOLS=(xrdp Xvnc vncserver teamviewer anydesk remotely)
-ENV_FILE="$HOME/.env"
 
-load_env() {
-    local possible_envs=(
-        "$HOME/.env"
-        "$(pwd)/.env"
-        "/usr/lib/claimation/.env"
-        "/etc/claimation/.env"
-    )
-    
-    local found_env=""
-    for env_path in "${possible_envs[@]}"; do
-        if [ -f "$env_path" ]; then
-            found_env="$env_path"
-            break
-        fi
-    done
-
-    # Standard locations for background service consistency
-    local extra_paths=("/etc/claimation/mode.env" "/etc/claimation/.env" "/usr/lib/claimation/.env")
-    if [ -z "$found_env" ]; then
-        for ps in "${extra_paths[@]}"; do
-             [ -f "$ps" ] && found_env="$ps" && break
-        done
-    fi
-
-    if [ -n "$found_env" ]; then
-        local env_content=$(sed '1s/^\xEF\xBB\xBF//' "$found_env")
-        RAW_MODE=$(echo "$env_content" | tr -d '\r' | grep "^CLAIM_MODE=" | cut -d'=' -f2)
-        [ -z "$RAW_MODE" ] && RAW_MODE=$(echo "$env_content" | tr -d '\r' | grep "^MODE=" | cut -d'=' -f2)
-        export MODE=$(echo "$RAW_MODE" | tr -d '\r' | sed 's/^[[:space:]]*["\ '']//; s/["\ ''][[:space:]]*$//' | tr '[:lower:]' '[:upper:]')
-    fi
-    export MODE="${MODE:-HEADLESS}"
-}
-
-check_and_kill() {
-    # Match app.py FORBIDDEN_TOOLS
-    local tools=("xrdp" "xrdp-sesman" "Xvnc" "vncserver" "tigervnc" "tightvnc" "x11vnc" "teamviewer" "anydesk" "remotely" "tightvncserver" "vnc4server" "Xorg" "weston" "Xwayland" "gnome-shell" "plasma-desktop")
-    load_env
-    
-    if [ "$MODE" = "HEADLESS" ]; then
-        local violated=false
-        for tool in "${tools[@]}"; do
-            if pgrep -f "$tool" >/dev/null 2>&1 || which "$tool" >/dev/null 2>&1 || dpkg -l "$tool" 2>/dev/null | grep -q "^ii "; then
-                violated=true
-                sudo pkill -9 -f "$tool" 2>/dev/null || true
-                
-                # Determine package name for purge
-                local pkg="$tool"
-                [[ "$tool" == *"vnc"* ]] && pkg="tigervnc-standalone-server"
-                [[ "$tool" == "xrdp-sesman" ]] && pkg="xrdp"
-                
-                sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "$pkg" 2>/dev/null || true
-                sudo apt-mark hold "$pkg" 2>/dev/null || true
-            fi
-        done
-        if [ "$violated" = true ]; then
-            log_error "SECURITY VIOLATION: Forbidden display tool detected in HEADLESS mode. Purging Claimation immediately."
-            sudo pkill -9 -f "claimation" 2>/dev/null || true
-            sudo systemctl --user stop claimation-app.service 2>/dev/null || true
-            
-            # Purge the application
-            sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "*claimation*" 2>/dev/null || true
-            sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y 2>/dev/null || true
-            log_error "Claimation uninstalled due to security violation."
-        fi
-        # Ensure Xvfb is always running
-        systemctl --user is-active --quiet xvfb || systemctl --user start xvfb 2>/dev/null
-    elif [ "$MODE" = "DEVELOPMENT" ]; then
-        # In DEV mode, allow xrdp components and xvfb. Purge others.
-        for tool in "${tools[@]}"; do
-            # NEVER purge foundational X11, Display servers, or RDP components in DEVELOPMENT mode
-            if [[ "$tool" != xrdp* && "$tool" != "xorgxrdp" && "$tool" != "Xorg" && "$tool" != "xserver-xorg"* && "$tool" != "x11-xserver-utils" ]] && (pgrep -f "$tool" >/dev/null 2>&1 || which "$tool" >/dev/null 2>&1 || dpkg -l "$tool" 2>/dev/null | grep -q "^ii "); then
-                # log_warn "Strict DEV Check: Forbidden tool detected -> $tool. Purging..."
-                sudo pkill -9 -f "$tool" 2>/dev/null || true
-                sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "$tool" 2>/dev/null || true
-            fi
-        done
-        # Verify authorized tools (Use systemctl for reliability, avoid flickering/restarts)
-        systemctl --user is-active --quiet xvfb || systemctl --user start xvfb 2>/dev/null
-        sudo systemctl is-active --quiet xrdp || sudo systemctl start xrdp 2>/dev/null
-    fi
-}
-
-while true; do
-    check_and_kill
-    sleep 10
-done
-MONITOR_SCRIPT_EOF
-    chmod +x ~/.local/bin/display-monitor.sh
-
-    # --- Create Display Monitor service ---
-    log_info "Creating Display Monitor systemd user service..."
-    mkdir -p ~/.config/systemd/user
-    cat > ~/.config/systemd/user/display-monitor.service << MONITOR_EOF
-[Unit]
-Description=Display Mode Monitor Watchdog
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/bin/bash %h/.local/bin/display-monitor.sh
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=display-monitor
-
-[Install]
-WantedBy=default.target
-MONITOR_EOF
-
-    # Pre-enable services via symlinks
+    # Pre-enable services via symlinks (systemd may not be running yet pre-restart)
     mkdir -p ~/.config/systemd/user/default.target.wants
     ln -sf ~/.config/systemd/user/xvfb.service ~/.config/systemd/user/default.target.wants/xvfb.service 2>/dev/null || true
-    ln -sf ~/.config/systemd/user/display-monitor.service ~/.config/systemd/user/default.target.wants/display-monitor.service 2>/dev/null || true
+    # The claimation-app.service symlink will be created after .deb install
     ln -sf /usr/lib/systemd/user/claimation-app.service ~/.config/systemd/user/default.target.wants/claimation-app.service 2>/dev/null || true
 
-    log_success "XRDP + Xvfb + Monitor configured."
+    log_success "XRDP + Xvfb configured."
 }
 
 # --- Password Encryption Helper ---
@@ -449,47 +246,32 @@ configure_wsl() {
         RESTART_REQUIRED=false
     fi
 
-    # Inject Master Switch: Dynamic X11 Display Detection into ~/.bashrc (IDEMPOTENT)
-    if ! grep -q "# Master Switch: Dynamic X11 Display Detection" ~/.bashrc 2>/dev/null; then
-        log_info "Injecting Master Switch display detection into ~/.bashrc..."
+    # Inject dynamic DISPLAY detection into ~/.bashrc (IDEMPOTENT)
+    if ! grep -q "# Dynamic X11 Display Detection" ~/.bashrc 2>/dev/null; then
+        log_info "Injecting dynamic DISPLAY detection into ~/.bashrc..."
         cat >> ~/.bashrc << 'BASHRC_EOF'
 
-    # Master Switch: Dynamic X11 Display Detection (WSL + XRDP)
-if [ -f "$(pwd)/.env" ]; then
-    ENV_FILE="$(pwd)/.env"
-elif [ -f /usr/lib/claimation/.env ]; then
-    ENV_FILE="/usr/lib/claimation/.env"
-fi
-
-if [ -n "$ENV_FILE" ]; then
-    RAW_MODE=$(grep "^MODE=" "$ENV_FILE" | cut -d'=' -f2)
-    [ -z "$RAW_MODE" ] && RAW_MODE=$(grep "^CLAIM_MODE=" "$ENV_FILE" | cut -d'=' -f2)
-    export MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
-fi
-MODE="${MODE:-HEADLESS}"
-
-if [ "$MODE" = "HEADLESS" ]; then
-    export DISPLAY=:99.0
-else
-    if [ -d /tmp/.X11-unix ]; then
-        DETECTED_DISPLAY=$(ls /tmp/.X11-unix/ | grep -oP 'X\K\d+' | sort -n | tail -1)
-        if [ -n "$DETECTED_DISPLAY" ]; then
-            export DISPLAY=:${DETECTED_DISPLAY}.0
-        fi
+# Dynamic X11 Display Detection (for WSL + XRDP)
+# Automatically finds the active X11 display so GUI apps (google-chrome, etc.)
+# work without manual DISPLAY configuration.
+if [ -d /tmp/.X11-unix ]; then
+    # Find the highest display number (XRDP uses :10, :11, :12...)
+    DETECTED_DISPLAY=$(ls /tmp/.X11-unix/ | grep -oP 'X\K\d+' | sort -n | tail -1)
+    if [ -n "$DETECTED_DISPLAY" ]; then
+        export DISPLAY=:${DETECTED_DISPLAY}.0
     fi
-    if [ -z "$DISPLAY" ] && pgrep -x Xvfb > /dev/null 2>&1; then
+fi
+# Fallback: If no X11 socket found but Xvfb is running, use :99
+if [ -z "$DISPLAY" ]; then
+    if pgrep -x Xvfb > /dev/null 2>&1; then
         export DISPLAY=:99.0
     fi
 fi
 BASHRC_EOF
-        log_success "Master Switch display detection added to .bashrc."
+        log_success "Dynamic DISPLAY detection added to .bashrc."
     else
-        log_info "Master Switch display detection already present in .bashrc."
+        log_info "Dynamic DISPLAY detection already present in .bashrc."
     fi
-
-    # Synchronization is now handled by looking at Project/Distro .env files directly.
-    # No longer creating or syncing to ~/.env for CLAIM_MODE.
-    log_info "WSL configuration optimized for Project/Distro environment detection."
 }
 
 # ==============================================================================
@@ -521,25 +303,9 @@ install_claimation() {
         # Fix startup sync fallback (remove the fallback to read-only source path)
         sudo sed -i 's/initial_ext_path = get_extension_source_path()/initial_ext_path = None/' "$APP_PY"
         
-        # Robust load_env_mode logic (Standardization + BOM Fix)
-        log_info "Applying robust load_env_mode logic to app.py..."
-        # Using Base64 to safely inject Python code without quote-nesting issues
-        echo "aW1wb3J0IHN5cyxvcyxyZTsKZnJvbSBwYXRobGliIGltcG9ydCBQYXRoOwpwPSIvdXNyL2xpYi9jbGFpbWF0aW9uL2NsYWltYXRpb24vYXBwLnB5IjsKaWYgbm90IG9zLnBhdGguZXhpc3RzKHApOiBzeXMuZXhpdCgwKTsKYz1vcGVuKHAsInIiKS5yZWFkKCk7CmZ1bmM9IiIiZGVmIGxvYWRfZW52X21vZGUoKToKICAgIGFwcF9yb290PW9zLnBhdGguZGlybmFtZShvcy5wYXRoLmRpcm5hbWUob3MucGF0aC5hYnNwYXRoKF9fZmlsZV9fKSkpCiAgICBwYXRocz1bb3MucGF0aC5qb2luKGFwcF9yb290LCIuZW52Iiksb3MucGF0aC5qb2luKG9zLmdldGN3ZCgpLCIuZW52Iiksb3MucGF0aC5leHBhbmR1c2VyKCJ+Ly5lbnYiKSwiL21udC9kL2JhY2tFbmQvY2xhaW1hdGlvbi8uZW52IiwiL2V0Yy9jbGFpbWF0aW9uL2NvbmZpZy5lbnYiXQogICAgZW52PXt9CiAgICBmb3VuZD1Ob25lCiAgICBmb3IgcHMgaW4gcGF0aHM6CiAgICAgICAgcGF0aD1QYXRoKHBzKQogICAgICAgIGlmIHBhdGguZXhpc3RzKCk6CiAgICAgICAgICAgIHRyeToKICAgICAgICAgICAgICAgIHdpdGggb3BlbihwYXRoLCJyIixlbmNvZGluZz0idXRmLTgtc2lnIikgYXMgZjoKICAgICAgICAgICAgICAgICAgICBmb3IgbCBpbiBmOgogICAgICAgICAgICAgICAgICAgICAgICBpZiAiPSIgaW4gbCBhbmQgbm90IGwuc3RyaXAoKS5zdGFydHN3aXRoKCIjIik6CiAgICAgICAgICAgICAgICAgICAgICAgICAgICBrLHY9bC5zdHJpcCgpLnNwbGl0KCI9IiwxKTtlbnZbay5zdHJpcCgpXT12LnN0cmlwKCkuc3RyaXAoIiciKS5zdHJpcCgnIicpCiAgICAgICAgICAgICAgICBmb3VuZD1wczticmVhawogICAgICAgICAgICBleGNlcHQ6cGFzcwogICAgZW09KG9zLmVudmlyb24uZ2V0KCJDTEFJTV9NT0RFIikgb3Igb3MuZW52aXJvbi5nZXQoIk1PREUiKSBvciAiIikuc3RyaXAoKS5zdHJpcCgiJyIpLnN0cmlwKCciJykKICAgIG09ZW0gb3IgZW52LmdldCgiQ0xBSU1fTU9ERSIpIG9yIGVudi5nZXQoIk1PREUiKSBvciAiSEVBRExFU1MiCiAgICByZXR1cm4gbS51cHBlcigpLGZvdW5kIiIiOwpjPXJlLnN1YihyImRlZiBsb2FkX2Vudl9tb2RlXChcKTouKj9yZXR1cm4gbW9kZS51cHBlclwoXCksIGZvdW5kX3BhdGgiLGZ1bmMsYyxmbGFncz1yZS5ET1RBTEwpOwpvcGVuKHAsInciKS53cml0ZShjKQo=" | base64 -d | sudo python3
-        log_success "Hotfixes for app.py applied."
+        log_success "Hotfixes applied successfully."
     else
         log_warn "Could not find app.py at $APP_PY. Skipping hotfix."
-    fi
-
-    CONFIG_PY="/usr/lib/claimation/claimation/config.py"
-    if [ -f "$CONFIG_PY" ]; then
-        log_info "Applying hotfix for missing APT_REPO_NAME in config.py..."
-        # Add APT_REPO_NAME after USE_APT definition if not already present
-        if ! grep -q "APT_REPO_NAME" "$CONFIG_PY"; then
-            sudo sed -i '/USE_APT = _s\["USE_APT"\]/a APT_REPO_NAME = "claimation"' "$CONFIG_PY"
-            log_success "APT_REPO_NAME hotfix applied."
-        else
-            log_info "APT_REPO_NAME already present."
-        fi
     fi
 
     # 2. Pre-configure Claimation profile (BYPASS interactive setup)
@@ -586,12 +352,7 @@ AUTOSTART_EOF
     log_info "Enabling user lingering for 24/7 operation..."
     sudo loginctl enable-linger "$(whoami)" 2>/dev/null || true
 
-    # 5. Persist the current Mode for the background monitor
-    log_info "Persisting display mode [${CLAIM_MODE}] to /etc/claimation/mode.env..."
-    sudo mkdir -p /etc/claimation
-    echo "CLAIM_MODE=\"${CLAIM_MODE}\"" | sudo tee /etc/claimation/mode.env >/dev/null
-
-    # 6. Pre-enable services
+    # 5. Pre-enable services
     # (systemd might not be running yet — it starts after wsl --shutdown)
     mkdir -p ~/.config/systemd/user/default.target.wants
     
@@ -604,7 +365,6 @@ AUTOSTART_EOF
 
     log_success "Claimation installed and automated for 24/7 background operation."
 }
-
 
 # ==============================================================================
 # FINAL OUTPUT
@@ -626,19 +386,15 @@ print_summary() {
     echo -e "${CYAN}│${NC}  ${WHITE}What happens after restart:${NC}                             ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}                                                          ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Xvfb starts automatically (virtual display :99)       ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Continuous Display Monitor starts (anti-RDP watchdog) ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Claimation starts automatically (24/7 background)     ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Auto-updater daemon runs as system service            ${CYAN}│${NC}"
-    if [ "$CLAIM_MODE" = "DEVELOPMENT" ]; then
-        echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Remote Desktop Connection enabled (Port 3389)         ${CYAN}│${NC}"
-    else
-        echo -e "${CYAN}│${NC}  ${RED}✗${NC} No Remote Desktop Connection allowed (Secure)         ${CYAN}│${NC}"
-    fi
+    echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} No Remote Desktop Connection needed!                  ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}                                                          ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}  ${WHITE}GUI Display Modes:${NC}                                     ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}    Edit ${MAGENTA}~/.env${NC} to switch systems:                     ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}      ${GREEN}CLAIM_MODE=\"HEADLESS\"${NC} — 24/7 background (Restricted) ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}      ${GREEN}CLAIM_MODE=\"DEVELOPMENT\"${NC} — Visible inside RDP          ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${WHITE}Useful commands:${NC}                                        ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}    ${MAGENTA}claimation status${NC}        — Check if running             ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}    ${MAGENTA}systemctl --user status claimation-app${NC}                  ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}    ${MAGENTA}systemctl --user status xvfb${NC}                            ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}    ${MAGENTA}google-chrome${NC}            — Just works! (auto DISPLAY)   ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}                                                          ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${WHITE}Optional RDP access:${NC}                                    ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}    ${BLUE}ip addr | grep eth0${NC}   — Get your WSL IP                ${CYAN}│${NC}"

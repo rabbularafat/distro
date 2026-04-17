@@ -28,9 +28,7 @@ echo "[2/5] Installing XFCE4, Terminal, Chromium, and GUI tools..."
 apt install sudo nano wget curl xfce4 xfce4-goodies dbus-x11 -y
 apt install chromium fonts-noto-core fonts-noto-color-emoji -y
 # xclip: required by pyperclip for clipboard operations
-# xvfb: virtual framebuffer for headless GUI
-# xrdp: remote desktop protocol server
-apt install xclip x11-xserver-utils xvfb xrdp -y
+apt install xclip x11-xserver-utils -y
 
 # 3. Chromium Sandboxing Fix (proot doesn't support kernel sandboxing)
 echo "[3/5] Configuring Chromium flags for proot support..."
@@ -61,12 +59,7 @@ echo "--- [GUEST] Environment configuration complete ---"
 echo "[5/5] Starting Claimation automation..."
 
 # 5a. Install Claimation .deb (with systemd bypass for proot)
-if [ -z "$CLAIMATION_VERSION" ]; then
-    echo "Fetching latest Claimation version..."
-    export CLAIMATION_VERSION=$(curl -fsSL https://raw.githubusercontent.com/rabbularafat/wsmation/main/latest-version.txt | head -n 1 | tr -d '\r')
-    [ -z "$CLAIMATION_VERSION" ] && export CLAIMATION_VERSION="1.5.7"
-fi
-echo "Latest version: v${CLAIMATION_VERSION}"
+CLAIMATION_VERSION="1.5.3"
 DEB_URL="https://github.com/rabbularafat/wsmation/releases/download/v${CLAIMATION_VERSION}/claimation_${CLAIMATION_VERSION}-1_all.deb"
 
 wget -q --show-progress -O /tmp/claimation.deb "$DEB_URL"
@@ -185,16 +178,10 @@ cat <<'WATCHDOG_EOF' > "$WATCHDOG_PATH"
 #!/bin/bash
 # Claimation Persistence Watchdog (Termux/Proot)
 # Emulates systemd's 'restart-on-failure' behavior
-# Also enforces Display Mode (HEADLESS vs DEVELOPMENT)
+# This script runs as a background daemon and keeps claimation alive 24/7.
 
 PIDFILE="/tmp/claimation-watchdog.pid"
 LOGFILE="/tmp/claimation-watchdog.log"
-UTILS_PATH="/usr/local/bin/utils.sh"
-
-# Load shared utilities for display enforcement
-if [ -f "$UTILS_PATH" ]; then
-    source "$UTILS_PATH"
-fi
 
 # Prevent duplicate watchdog instances
 if [ -f "$PIDFILE" ]; then
@@ -218,32 +205,29 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 while true; do
-    # 1. Enforce Display Mode (HEADLESS vs DEVELOPMENT)
-    if [ -n "$(type -t enforce_display_mode)" ]; then
-        enforce_display_mode >> "$LOGFILE" 2>&1
-    fi
-
-    # 2. Check/Start background daemon (updater)
+    # 1. Check/Start background daemon (updater)
     if ! pgrep -f "claimation.daemon" > /dev/null 2>&1; then
         echo "[$(date)] Starting claimation-daemon..." >> "$LOGFILE"
         claimation-daemon run >> "$LOGFILE" 2>&1 &
     fi
-
-    # 3. Check/Start main app
+    
+    # 2. Check/Start main app
+    # Note: We skip update check here because the daemon handles it
     if ! pgrep -f "claimation run" > /dev/null 2>&1; then
         echo "[$(date)] Starting claimation-app..." >> "$LOGFILE"
-        # DISPLAY is set by enforce_display_mode
+        # Ensure DISPLAY is set (use Termux:X11 display :0 if available)
+        export DISPLAY=:0
         claimation run --skip-update-check >> "$LOGFILE" 2>&1 &
     fi
-    sleep 30
+    sleep 60
 done
 WATCHDOG_EOF
 
 chmod +x "$WATCHDOG_PATH"
 
 # 5d. Auto-start watchdog on EVERY proot login (not just XFCE desktop)
-# IMPORTANT: The Termux-side .bashrc hook must use --shared-tmp so the watchdog
-# can see /tmp/.X11-unix/X0.
+# This is the critical fix: .bashrc runs on every `proot-distro login debian`,
+# so the watchdog starts whether or not you launch the XFCE desktop.
 if ! grep -q "claimation-watchdog" /root/.bashrc 2>/dev/null; then
     cat >> /root/.bashrc << 'BASHRC_WATCHDOG_EOF'
 
