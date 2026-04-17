@@ -3,11 +3,11 @@ source "$(dirname "$0")/utils.sh"
 
 log_step "Step 3: Installing and configuring XRDP + Xvfb..."
 
-# Install XRDP + Xvfb + X11 utilities
+# Install Base Display requirements (Xvfb + X11 utilities)
 # xclip: required by pyperclip for clipboard operations
 # xvfb: virtual framebuffer for headless GUI (pyautogui, Chrome work on it)
 # x11-xserver-utils: provides xhost command
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp xvfb xclip x11-xserver-utils
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xvfb xclip x11-xserver-utils
 
 # Configure XRDP session with systemd DISPLAY injection
 log_info "Setting up .xsession with xhost and systemd persistence..."
@@ -19,6 +19,7 @@ xhost +local: >/dev/null 2>&1
 # Load display mode preference
 [ -f ~/.env ] && source ~/.env
 CLAIM_MODE="${CLAIM_MODE:-HEADLESS}"
+CLAIM_MODE=$(echo "$CLAIM_MODE" | tr '[:lower:]' '[:upper:]')
 
 # If in DEVELOPMENT mode, hijack the display for GUI apps
 if [ "$CLAIM_MODE" = "DEVELOPMENT" ]; then
@@ -38,11 +39,6 @@ chmod +x ~/.xsession
 # Fix Xwrapper
 log_info "Updating X11 Xwrapper configuration..."
 sudo sed -i 's/console/anybody/g' /etc/X11/Xwrapper.config 2>/dev/null || true
-
-# Start and Enable XRDP
-log_info "Enabling and starting XRDP service..."
-sudo systemctl enable xrdp
-sudo systemctl start xrdp
 
 # --- Create Xvfb systemd user service ---
 # Xvfb is a REAL X11 server (renders pixels in RAM). It supports:

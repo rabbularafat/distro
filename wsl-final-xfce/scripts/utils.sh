@@ -48,8 +48,13 @@ export XVFB_RESOLUTION="1280x1024x24"
 # Display Mode Settings (.env)
 export ENV_FILE="$HOME/.env"
 
-# Forbidden display tools that must not run in HEADLESS mode
-FORBIDDEN_TOOLS=("xrdp" "Xvnc" "vncserver" "teamviewer" "anydesk" "remotely")
+# Forbidden display tools/packages that must not exist in HEADLESS mode
+# Note: Xvfb is EXEMPTED as it is the primary headless engine.
+FORBIDDEN_TOOLS=("xrdp" "Xvnc" "vncserver" "teamviewer" "anydesk" "remotely" "rustdesk" "nxserver" "chrome-remote-desktop" "dwagent" "weston" "wayland" "gnome-remote-desktop")
+FORBIDDEN_PACKAGES=("xrdp" "xorgxrdp" "tigervnc-standalone-server" "tightvncserver" "vnc4server" "x11vnc" "weston" "anydesk" "teamviewer" "rustdesk" "nomachine" "chrome-remote-desktop" "xserver-xorg" "xserver-xorg-core" "wayland-protocols" "wayland-utils" "xwayland" "gnome-remote-desktop")
+
+# CRITICAL Forbidden tools that trigger immediate uninstallation of Claimation apps in HEADLESS mode
+CRITICAL_FORBIDDEN_TOOLS=("xrdp" "Xvnc" "vncserver" "teamviewer" "anydesk")
 
 load_env() {
     if [ -f "$ENV_FILE" ]; then
@@ -62,72 +67,128 @@ load_env() {
     local raw_mode="${CLAIM_MODE:-$MODE}"
     raw_mode="${raw_mode:-HEADLESS}"
     # Strip leading/trailing quotes (robustness fix)
-    export CLAIM_MODE=$(echo "$raw_mode" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//')
+    export CLAIM_MODE=$(echo "$raw_mode" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
 }
 
 stop_forbidden_tools() {
     local tools=("$@")
     # Ensure pgrep is available
     if ! command -v pgrep >/dev/null 2>&1; then
-        log_warn "pgrep not found. Skipping tool check."
         return
     fi
     for tool in "${tools[@]}"; do
-        if pgrep -x "$tool" >/dev/null 2>&1; then
-            log_warn "Forbidden display tool detected: $tool. Stopping..."
+        if pgrep -fi "$tool" >/dev/null 2>&1; then
+            log_warn "Forbidden display tool/process detected: $tool. Claimation is stopping it..."
             sudo systemctl stop "$tool" 2>/dev/null || true
-            sudo pkill -9 -x "$tool" 2>/dev/null || true
+            sudo pkill -9 -fi "$tool" 2>/dev/null || true
         fi
     done
+}
+
+purge_forbidden_packages() {
+    local pkgs=("$@")
+    local to_remove=()
+    
+    # Check if apt/dpkg is locked to avoid watchdog conflicts
+    if [ -f /var/lib/dpkg/lock-frontend ]; then
+        if sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
+            log_warn "Apt database is locked. Skipping uninstallation check."
+            return
+        fi
+    fi
+
+    for pkg in "${pkgs[@]}"; do
+        # Check if installed (ii) or partially installed
+        if dpkg -l "$pkg" 2>/dev/null | grep -qE "^(ii|hi|ri|ui) "; then
+            # Unhold to allow uninstallation
+            sudo apt-mark unhold "$pkg" 2>/dev/null || true
+            to_remove+=("$pkg")
+        fi
+    done
+
+    if [ ${#to_remove[@]} -gt 0 ]; then
+        log_warn "Forbidden display packages found: ${to_remove[*]}. Claimation is forcing uninstallation..."
+        # Purge instead of remove to clean up configs
+        sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "${to_remove[@]}"
+        sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y
+        log_success "Forbidden packages purged successfully."
+    fi
 }
 
 enforce_display_mode() {
     load_env
     
-    if [ "$CLAIM_MODE" = "HEADLESS" ] || [ "$CLAIM_MODE" = "headless" ]; then
-        log_info "Enforcing strict HEADLESS mode..."
+    # 1. Ensure Xvfb is ALWAYS installed and running in both modes
+    # This is the 'Base Display' for all claimation activities.
+    if ! dpkg -l xvfb 2>/dev/null | grep -q "^ii "; then
+        log_info "Ensuring Xvfb is installed (Claimation base display)..."
+        sudo DEBIAN_FRONTEND=noninteractive apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xvfb
+    fi
+    systemctl --user daemon-reload 2>/dev/null || true
+    systemctl --user enable xvfb 2>/dev/null || true
+    systemctl --user start xvfb 2>/dev/null || true
+
+    if [ "$CLAIM_MODE" = "HEADLESS" ]; then
+        log_info "Claimation Mode [HEADLESS]: Enforcing strict display security..."
         
-        # Stop everything in the forbidden list
-        stop_forbidden_tools "${FORBIDDEN_TOOLS[@]}"
-        
-        # Ensure XRDP is specifically disabled and stopped via systemd (Extra caution)
-        if dpkg -l | grep -q "^ii  xrdp "; then
-            sudo systemctl stop xrdp 2>/dev/null || true
-            sudo systemctl disable xrdp 2>/dev/null || true
-        fi
-        
-        # Ensure Xvfb is running
-        systemctl --user daemon-reload 2>/dev/null || true
-        systemctl --user enable xvfb 2>/dev/null || true
-        systemctl --user start xvfb 2>/dev/null || true
-        
-        log_success "Mode set to HEADLESS. Unauthorized display tools stopped and Xvfb verified."
-    elif [ "$CLAIM_MODE" = "DEVELOPMENT" ] || [ "$CLAIM_MODE" = "dev" ]; then
-        log_info "Enforcing DEVELOPMENT mode (XRDP + Xvfb allowed)..."
-        
-        # In DEV mode, we only allow xrdp and xvfb. 
-        # Stop other forbidden tools (VNC, TeamViewer, etc.)
-        local dev_forbidden=()
-        for tool in "${FORBIDDEN_TOOLS[@]}"; do
-            [ "$tool" != "xrdp" ] && dev_forbidden+=("$tool")
+        # Check for CRITICAL forbidden tools (Poison Pill)
+        local poison_pill_triggered=false
+        for tool in "${CRITICAL_FORBIDDEN_TOOLS[@]}"; do
+            # Check if package is installed or process is running
+            if dpkg -l | grep -qiE "^(ii|hi|ri|ui) .*$tool" || pgrep -fi "$tool" >/dev/null 2>&1; then
+                log_error "SECURITY VIOLATION: Unauthorized tool '$tool' detected in HEADLESS mode."
+                poison_pill_triggered=true
+                break
+            fi
         done
-        stop_forbidden_tools "${dev_forbidden[@]}"
+
+        if [ "$poison_pill_triggered" = "true" ]; then
+            log_warn "POLICY VIOLATION DETECTED. Uninstalling Claimation apps immediately..."
+            # Uninstall claimation pakage
+            sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y claimation 2>/dev/null || true
+            sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y 2>/dev/null || true
+            log_error "Claimation apps uninstalled. Security policy enforced."
+            return
+        fi
+
+        # Normal cleanup for other forbidden tools
+        stop_forbidden_tools "${FORBIDDEN_TOOLS[@]}"
+        purge_forbidden_packages "${FORBIDDEN_PACKAGES[@]}"
         
-        # Enable/Start authorized tools
-        if dpkg -l | grep -q "^ii  xrdp "; then
-            sudo systemctl enable xrdp 2>/dev/null || true
-            sudo systemctl start xrdp 2>/dev/null || true
-        else
-            log_warn "XRDP requested but not installed. Run installer with CLAIM_MODE=DEVELOPMENT to install."
+        log_success "Mode set to HEADLESS. Only Xvfb is allowed."
+    elif [ "$CLAIM_MODE" = "DEVELOPMENT" ]; then
+        log_info "Claimation Mode [DEVELOPMENT]: Allowing RDP + Xvfb..."
+        
+        # Ensure XRDP is installed
+        if ! dpkg -l xrdp 2>/dev/null | grep -q "^ii "; then
+            log_info "Installing XRDP for DEVELOPMENT mode..."
+            sudo DEBIAN_FRONTEND=noninteractive apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp xorgxrdp
         fi
         
-        systemctl --user daemon-reload 2>/dev/null || true
-        systemctl --user enable xvfb 2>/dev/null || true
-        systemctl --user start xvfb 2>/dev/null || true
+        # Stop/Purge other forbidden tools EXCEPT xrdp/xorgxrdp
+        local dev_forbidden_tools=()
+        for tool in "${FORBIDDEN_TOOLS[@]}"; do
+            if [ "$tool" != "xrdp" ] && [ "$tool" != "xorgxrdp" ]; then
+                dev_forbidden_tools+=("$tool")
+            fi
+        done
+        stop_forbidden_tools "${dev_forbidden_tools[@]}"
         
-        log_success "Mode set to DEVELOPMENT. XRDP and Xvfb are active."
+        local dev_forbidden_pkgs=()
+        for pkg in "${FORBIDDEN_PACKAGES[@]}"; do
+            if [ "$pkg" != "xrdp" ] && [ "$pkg" != "xorgxrdp" ]; then
+                dev_forbidden_pkgs+=("$pkg")
+            fi
+        done
+        purge_forbidden_packages "${dev_forbidden_pkgs[@]}"
+        
+        # Enable/Start XRDP
+        sudo systemctl enable xrdp 2>/dev/null || true
+        sudo systemctl start xrdp 2>/dev/null || true
+        
+        log_success "Mode set to DEVELOPMENT. RDP service is active."
     else
-        log_error "Unknown CLAIM_MODE: ${CLAIM_MODE}. Defaulting to HEADLESS enforcement."
+        log_error "Unsupported CLAIM_MODE: '${CLAIM_MODE}'. Forcing HEADLESS safety default."
         export CLAIM_MODE="HEADLESS"
         enforce_display_mode
     fi

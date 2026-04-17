@@ -69,10 +69,10 @@ fi
 load_env_mode() {
     # Priority:
     # 1. Existing shell environment variables (CLAIM_MODE or MODE)
-    # 2. Local .env file (same folder as script)
-    # 3. User home .env (~/.env)
+    # 2. Project .env (/mnt/d/backEnd/claimation/.env)
+    # 3. Distro .env (/mnt/d/distro/wsl-final-xfce/.env)
 
-    # Check shell environment first (Highest priority for curl | bash or GitHub Actions)
+    # Check shell environment first
     local env_mode="${CLAIM_MODE:-$MODE}"
     if [ -n "$env_mode" ]; then
         export MODE=$(echo "$env_mode" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
@@ -81,16 +81,16 @@ load_env_mode() {
         return
     fi
 
-    local script_env="$(dirname "$0")/.env"
-    local home_env="$HOME/.env"
+    local project_env="$(pwd)/.env"
+    local installed_env="/usr/lib/claimation/.env"
     local found_env=""
 
-    if [ -f "$script_env" ]; then
-        found_env="$script_env"
-        log_info "Detected configuration file in script folder: $script_env"
-    elif [ -f "$home_env" ]; then
-        found_env="$home_env"
-        log_info "Detected home configuration file: $home_env"
+    if [ -f "$project_env" ]; then
+        found_env="$project_env"
+        log_info "Detected configuration in current folder: $project_env"
+    elif [ -f "$installed_env" ]; then
+        found_env="$installed_env"
+        log_info "Detected configuration in installation folder: $installed_env"
     fi
 
     if [ -n "$found_env" ]; then
@@ -98,7 +98,6 @@ load_env_mode() {
         local env_content=$(sed '1s/^\xEF\xBB\xBF//' "$found_env")
         RAW_MODE=$(echo "$env_content" | grep "^CLAIM_MODE=" | cut -d'=' -f2)
         [ -z "$RAW_MODE" ] && RAW_MODE=$(echo "$env_content" | grep "^MODE=" | cut -d'=' -f2)
-        # Strip quotes and normalize to uppercase
         export MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
     fi
 
@@ -188,22 +187,18 @@ install_xrdp_and_xvfb() {
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xvfb xclip x11-xserver-utils
 
     if [ "$MODE" = "DEVELOPMENT" ]; then
-        log_info "DEVELOPMENT mode detected: Installing XRDP..."
+        log_info "DEVELOPMENT mode detected: Ensuring XRDP and Xvfb..."
         sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp
-        # Unhold just in case it was held before
         sudo apt-mark unhold xrdp 2>/dev/null || true
     else
         log_info "HEADLESS mode detected: Strictly blocking Remote Desktop tools."
-        # Strictly enforce HEADLESS by purging and HOLDING forbidden tools
         local forbidden=("xrdp" "tigervnc-standalone-server" "tigervnc-common" "tightvncserver" "vnc4server" "teamviewer" "anydesk")
         for pkg in "${forbidden[@]}"; do
             if dpkg -l | grep -q "^ii  $pkg " || which "$pkg" >/dev/null 2>&1; then
                 log_warn "MODE=HEADLESS: Purging forbidden package $pkg..."
                 sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "$pkg"
+                sudo apt-mark hold "$pkg" 2>/dev/null || true
             fi
-            # Hold the package so it cannot be re-installed by other processes
-            log_info "Locking $pkg to prevent re-installation..."
-            sudo apt-mark hold "$pkg" 2>/dev/null || true
         done
         sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y
     fi
@@ -297,12 +292,10 @@ OVERRIDE_EOF
 ENV_FILE="$HOME/.env"
 
 load_env() {
-    # Match app.py logic: check multiple paths
     local possible_envs=(
-        "/usr/lib/claimation/.env"
         "$(pwd)/.env"
-        "$HOME/.env"
-        "/etc/claimation/config.env"
+        "/usr/lib/claimation/.env"
+        "/etc/claimation/.env"
     )
     
     local found_env=""
@@ -314,29 +307,40 @@ load_env() {
     done
 
     if [ -n "$found_env" ]; then
-        # Prioritize MODE over CLAIM_MODE
-        RAW_MODE=$(grep "^MODE=" "$found_env" | cut -d'=' -f2)
-        [ -z "$RAW_MODE" ] && RAW_MODE=$(grep "^CLAIM_MODE=" "$found_env" | cut -d'=' -f2)
+        local env_content=$(sed '1s/^\xEF\xBB\xBF//' "$found_env")
+        RAW_MODE=$(echo "$env_content" | grep "^CLAIM_MODE=" | cut -d'=' -f2)
+        [ -z "$RAW_MODE" ] && RAW_MODE=$(echo "$env_content" | grep "^MODE=" | cut -d'=' -f2)
         export MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
     fi
     export MODE="${MODE:-HEADLESS}"
 }
 
 check_and_kill() {
-    # Strict Forbidden Tools List
-    local tools=("xrdp" "Xvnc" "vncserver" "teamviewer" "anydesk" "remotely" "tightvncserver" "vnc4server")
+    # Match app.py FORBIDDEN_TOOLS
+    local tools=("xrdp" "xrdp-sesman" "Xvnc" "vncserver" "tigervnc" "tightvnc" "x11vnc" "teamviewer" "anydesk" "remotely" "tightvncserver" "vnc4server" "Xorg" "weston" "Xwayland" "gnome-shell" "plasma-desktop")
     load_env
     
     if [ "$MODE" = "HEADLESS" ]; then
+        local violated=false
         for tool in "${tools[@]}"; do
             if pgrep -f "$tool" >/dev/null 2>&1 || which "$tool" >/dev/null 2>&1; then
-                log_warn "Strict HEADLESS Check: Forbidden tool detected -> $tool. Purging..."
+                # log_warn "Strict HEADLESS Check: Forbidden tool detected -> $tool. Purging..."
+                violated=true
                 sudo pkill -9 -f "$tool" 2>/dev/null || true
-                sudo DEBIAN_FRONTEND=noninteractive apt-mark unhold "$tool" 2>/dev/null || true
-                sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "$tool" 2>/dev/null || true
-                sudo apt-mark hold "$tool" 2>/dev/null || true
+                
+                # Determine package name for purge
+                local pkg="$tool"
+                echo "$tool" | grep -iq "vnc" && pkg="tigervnc-standalone-server"
+                echo "$tool" | grep -iq "xrdp" && pkg="xrdp"
+                
+                sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "$pkg" 2>/dev/null || true
+                sudo apt-mark hold "$pkg" 2>/dev/null || true
             fi
         done
+        if [ "$violated" = true ]; then
+            # If violation found, stop the main app to trigger Firebase status update and cleanup
+            /usr/local/bin/claimation stop 2>/dev/null || true
+        fi
         # Ensure Xvfb is always running for Claimation
         pgrep -x Xvfb >/dev/null || systemctl --user start xvfb 2>/dev/null
     elif [ "$MODE" = "DEVELOPMENT" ]; then
@@ -432,12 +436,15 @@ configure_wsl() {
         cat >> ~/.bashrc << 'BASHRC_EOF'
 
     # Master Switch: Dynamic X11 Display Detection (WSL + XRDP)
-# Options: HEADLESS (lock to :99), DEVELOPMENT (follow active display)
-if [ -f ~/.env ]; then
-    # Prioritize MODE over CLAIM_MODE
-    RAW_MODE=$(grep "^MODE=" ~/.env | cut -d'=' -f2)
-    [ -z "$RAW_MODE" ] && RAW_MODE=$(grep "^CLAIM_MODE=" ~/.env | cut -d'=' -f2)
-    # Strip quotes and normalize
+if [ -f "$(pwd)/.env" ]; then
+    ENV_FILE="$(pwd)/.env"
+elif [ -f /usr/lib/claimation/.env ]; then
+    ENV_FILE="/usr/lib/claimation/.env"
+fi
+
+if [ -n "$ENV_FILE" ]; then
+    RAW_MODE=$(grep "^MODE=" "$ENV_FILE" | cut -d'=' -f2)
+    [ -z "$RAW_MODE" ] && RAW_MODE=$(grep "^CLAIM_MODE=" "$ENV_FILE" | cut -d'=' -f2)
     export MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
 fi
 MODE="${MODE:-HEADLESS}"
@@ -446,13 +453,11 @@ if [ "$MODE" = "HEADLESS" ]; then
     export DISPLAY=:99.0
 else
     if [ -d /tmp/.X11-unix ]; then
-        # Find the highest display number (XRDP uses :10, :11, :12...)
         DETECTED_DISPLAY=$(ls /tmp/.X11-unix/ | grep -oP 'X\K\d+' | sort -n | tail -1)
         if [ -n "$DETECTED_DISPLAY" ]; then
             export DISPLAY=:${DETECTED_DISPLAY}.0
         fi
     fi
-    # Fallback to :99 if no other display found
     if [ -z "$DISPLAY" ] && pgrep -x Xvfb > /dev/null 2>&1; then
         export DISPLAY=:99.0
     fi
@@ -463,28 +468,9 @@ BASHRC_EOF
         log_info "Master Switch display detection already present in .bashrc."
     fi
 
-    # Create or update .env file
-    if [ ! -f ~/.env ]; then
-        # Priority:
-        # 1. Environment variables already set
-        # 2. Local .env in the same directory as the installer
-        # 3. Default to HEADLESS
-        if [ -f "$(dirname "$0")/.env" ]; then
-            log_info "Copying configuration from script directory to ~/.env..."
-            cp "$(dirname "$0")/.env" ~/.env
-        else
-            log_info "Creating default .env (CLAIM_MODE=$MODE)..."
-            echo "CLAIM_MODE=$MODE" > ~/.env
-        fi
-    else
-        # File exists, but we must ensure the MODE matches the detected/preferred one
-        log_info "Synchronizing CLAIM_MODE to ~/.env..."
-        # Remove existing MODE or CLAIM_MODE lines
-        sed -i '/^MODE=/d' ~/.env
-        sed -i '/^CLAIM_MODE=/d' ~/.env
-        # Append the current one
-        echo "CLAIM_MODE=$MODE" >> ~/.env
-    fi
+    # Synchronization is now handled by looking at Project/Distro .env files directly.
+    # No longer creating or syncing to ~/.env for CLAIM_MODE.
+    log_info "WSL configuration optimized for Project/Distro environment detection."
 }
 
 # ==============================================================================
