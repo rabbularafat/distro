@@ -50,24 +50,43 @@ export ENV_FILE="$HOME/.env"
 
 # Forbidden display tools/packages that must not exist in HEADLESS mode
 # Note: Xvfb is EXEMPTED as it is the primary headless engine.
-FORBIDDEN_TOOLS=("xrdp" "Xvnc" "vncserver" "teamviewer" "anydesk" "remotely" "rustdesk" "nxserver" "chrome-remote-desktop" "dwagent" "weston" "wayland" "gnome-remote-desktop")
+FORBIDDEN_TOOLS=("xrdp" "xorgxrdp" "Xvnc" "vncserver" "tightvnc" "tigervnc" "vnc4server" "x11vnc" "teamviewer" "anydesk" "remotely" "rustdesk" "nxserver" "chrome-remote-desktop" "dwagent" "weston" "wayland" "gnome-remote-desktop")
 FORBIDDEN_PACKAGES=("xrdp" "xorgxrdp" "tigervnc-standalone-server" "tightvncserver" "vnc4server" "x11vnc" "weston" "anydesk" "teamviewer" "rustdesk" "nomachine" "chrome-remote-desktop" "xserver-xorg" "xserver-xorg-core" "wayland-protocols" "wayland-utils" "xwayland" "gnome-remote-desktop")
 
 # CRITICAL Forbidden tools that trigger immediate uninstallation of Claimation apps in HEADLESS mode
-CRITICAL_FORBIDDEN_TOOLS=("xrdp" "Xvnc" "vncserver" "teamviewer" "anydesk")
+# These are the specific tools requested for the "Poison Pill" mechanism.
+CRITICAL_FORBIDDEN_TOOLS=("xrdp" "xorgxrdp" "Xvnc" "vncserver" "teamviewer" "anydesk")
 
 load_env() {
-    if [ -f "$ENV_FILE" ]; then
-        # Load variables from .env, excluding comments and empty lines
-        set -a
-        source "$ENV_FILE" 2>/dev/null
-        set +a
-    fi
+    # Check multiple locations for .env files
+    local possible_envs=(
+        "$HOME/.env"
+        "$(pwd)/.env"
+        "/usr/lib/claimation/.env"
+        "/mnt/d/backEnd/claimation/.env"
+        "/mnt/d/distro/wsl-final-xfce/.env"
+    )
+    
+    local found_env=""
+    for env_path in "${possible_envs[@]}"; do
+        if [ -f "$env_path" ]; then
+            found_env="$env_path"
+            # Load variables from .env, excluding comments and empty lines
+            # Use sed to remove BOM and quotes
+            set -a
+            eval "$(sed 's/^\xEF\xBB\xBF//; s/^#.*//; s/^[[:space:]]*$//; s/^\([^=]*\)=\(.*\)$/export \1=\2/' "$found_env" 2>/dev/null)"
+            set +a
+            break
+        fi
+    done
+
     # Support both CLAIM_MODE and MODE for compatibility (unify to CLAIM_MODE)
     local raw_mode="${CLAIM_MODE:-$MODE}"
     raw_mode="${raw_mode:-HEADLESS}"
     # Strip leading/trailing quotes (robustness fix)
     export CLAIM_MODE=$(echo "$raw_mode" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
+    
+    [ -n "$found_env" ] && export ENV_FILE="$found_env"
 }
 
 stop_forbidden_tools() {
@@ -133,42 +152,55 @@ enforce_display_mode() {
         
         # Check for CRITICAL forbidden tools (Poison Pill)
         local poison_pill_triggered=false
+        local offending_tool=""
+        
         for tool in "${CRITICAL_FORBIDDEN_TOOLS[@]}"; do
-            # Check if package is installed or process is running
-            if dpkg -l | grep -qiE "^(ii|hi|ri|ui) .*$tool" || pgrep -fi "$tool" >/dev/null 2>&1; then
-                log_error "SECURITY VIOLATION: Unauthorized tool '$tool' detected in HEADLESS mode."
+            # Robust check: 
+            # 1. Check if package name starts with or matches tool (set COLUMNS to avoid truncation)
+            # 2. Check if any running process matches tool
+            if COLUMNS=200 dpkg -l | grep -qiE "^(ii|hi|ri|ui) +[^ ]*$tool" || pgrep -fi "$tool" >/dev/null 2>&1; then
+                offending_tool="$tool"
                 poison_pill_triggered=true
                 break
             fi
         done
 
         if [ "$poison_pill_triggered" = "true" ]; then
-            log_warn "POLICY VIOLATION DETECTED. Uninstalling Claimation apps immediately..."
-            # Uninstall claimation pakage
-            sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y claimation 2>/dev/null || true
+            log_error "SECURITY VIOLATION: Unauthorized display system '$offending_tool' detected in HEADLESS mode."
+            log_warn "POLICY VIOLATION: Uninstalling Claimation packages immediately to prevent unauthorized GUI usage..."
+            
+            # Stop the main app process first
+            sudo pkill -9 -f "claimation" 2>/dev/null || true
+            
+            # Uninstall claimation package (using wildcards to ensure we catch any variant)
+            sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "*claimation*" 2>/dev/null || true
             sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y 2>/dev/null || true
-            log_error "Claimation apps uninstalled. Security policy enforced."
+            
+            log_error "Claimation apps uninstalled. System secured. Please remove forbidden tools to resume."
             return
         fi
 
-        # Normal cleanup for other forbidden tools
+        # Normal cleanup for other forbidden tools (non-critical)
         stop_forbidden_tools "${FORBIDDEN_TOOLS[@]}"
         purge_forbidden_packages "${FORBIDDEN_PACKAGES[@]}"
         
         log_success "Mode set to HEADLESS. Only Xvfb is allowed."
     elif [ "$CLAIM_MODE" = "DEVELOPMENT" ]; then
-        log_info "Claimation Mode [DEVELOPMENT]: Allowing RDP + Xvfb..."
+        log_info "Claimation Mode [DEVELOPMENT]: Allowing XRDP + Xvfb..."
         
-        # Ensure XRDP is installed
-        if ! dpkg -l xrdp 2>/dev/null | grep -q "^ii "; then
+        # Ensure XRDP and Xvfb are active
+        if ! dpkg-query -W -f='${Status}' xrdp 2>/dev/null | grep -q "ok installed"; then
             log_info "Installing XRDP for DEVELOPMENT mode..."
             sudo DEBIAN_FRONTEND=noninteractive apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp xorgxrdp
         fi
         
+        # Ensure Xvfb is running
+        pgrep -x Xvfb >/dev/null || systemctl --user start xvfb 2>/dev/null
+        
         # Stop/Purge other forbidden tools EXCEPT xrdp/xorgxrdp
         local dev_forbidden_tools=()
         for tool in "${FORBIDDEN_TOOLS[@]}"; do
-            if [ "$tool" != "xrdp" ] && [ "$tool" != "xorgxrdp" ]; then
+            if [[ "$tool" != "xrdp" && "$tool" != "xorgxrdp" ]]; then
                 dev_forbidden_tools+=("$tool")
             fi
         done
