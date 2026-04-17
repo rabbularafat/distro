@@ -19,7 +19,7 @@ xhost +local: >/dev/null 2>&1
 # Load display mode preference
 [ -f ~/.env ] && source ~/.env
 CLAIM_MODE="${CLAIM_MODE:-HEADLESS}"
-CLAIM_MODE=$(echo "$CLAIM_MODE" | tr '[:lower:]' '[:upper:]')
+CLAIM_MODE=$(echo "$CLAIM_MODE" | tr -d '\r' | tr '[:lower:]' '[:upper:]')
 
 # If in DEVELOPMENT mode, hijack the display for GUI apps
 if [ "$CLAIM_MODE" = "DEVELOPMENT" ]; then

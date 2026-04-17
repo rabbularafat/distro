@@ -73,18 +73,25 @@ load_env() {
     for env_path in "${possible_envs[@]}"; do
         if [ -f "$env_path" ]; then
             found_env="$env_path"
-            # Load variables from .env robustly
+            # Load variables from .env robustly (strip CRLF, handle quotes, export)
             set -a
-            eval "$(sed 's/^\xEF\xBB\xBF//; s/^#.*//; s/^[[:space:]]*$//; s/^\([^=]*\)=\(.*\)$/export \1=\2/' "$found_env" 2>/dev/null | sed 's/=\([^\"]*$\)/="\1"/')"
+            # 1. Remove BOM
+            # 2. Remove comments and empty lines
+            # 3. Strip '\r' (CRLF fix)
+            # 4. Convert key=value to export key="value"
+            eval "$(sed 's/^\xEF\xBB\xBF//; s/^#.*//; s/^[[:space:]]*$//' "$found_env" | tr -d '\r' | sed 's/^\([^=]*\)=\(.*\)$/export \1=\2/' | sed 's/=\([^\"]*$\)/="\1"/')"
             set +a
             break
         fi
     done
 
-    # Support both CLAIM_MODE and MODE
+    # Support both CLAIM_MODE and MODE, prioritizing CLAIM_MODE
     local raw_mode="${CLAIM_MODE:-$MODE}"
     raw_mode="${raw_mode:-HEADLESS}"
-    export CLAIM_MODE=$(echo "$raw_mode" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
+    
+    # Normalize: strip quotes, strip '\r' (double check), and uppercase
+    export CLAIM_MODE=$(echo "$raw_mode" | tr -d '\r' | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
+    export MODE="$CLAIM_MODE"
     
     [ -n "$found_env" ] && export ENV_FILE="$found_env"
 }

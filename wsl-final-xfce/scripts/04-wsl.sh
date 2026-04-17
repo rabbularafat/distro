@@ -21,8 +21,8 @@ if ! grep -q "Master Switch: Dynamic X11 Display Detection" ~/.bashrc 2>/dev/nul
 # Options: HEADLESS (lock to :99), DEVELOPMENT (follow active display)
 if [ -f ~/.env ]; then
     # Load env but only export specific variables to avoid polluting
-    # Using a robust way to strip quotes if they exist and handling BOM
-    ENV_DATA=$(sed '1s/^\xEF\xBB\xBF//' ~/.env)
+    # Using a robust way to strip quotes if they exist and handling BOM/CRLF
+    ENV_DATA=$(tr -d '\r' < ~/.env | sed '1s/^\xEF\xBB\xBF//')
     RAW_MODE=$(echo "$ENV_DATA" | grep "^CLAIM_MODE=" | cut -d'=' -f2)
     [ -z "$RAW_MODE" ] && RAW_MODE=$(echo "$ENV_DATA" | grep "^MODE=" | cut -d'=' -f2)
     export CLAIM_MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
@@ -75,7 +75,8 @@ else
 fi
 
 # Strict Enforcement: Purge forbidden GUI tools in HEADLESS mode during setup
-if grep -q "CLAIM_MODE=HEADLESS" ~/.env 2>/dev/null; then
+load_env
+if [ "$CLAIM_MODE" = "HEADLESS" ]; then
     log_warn "HEADLESS mode detected. Purging forbidden display tools (xrdp, vnc, x11, wayland)..."
     FORBIDDEN_PKGS="xrdp xorgxrdp tigervnc-standalone-server tigervnc-common tightvncserver vnc4server x11vnc anydesk teamviewer xserver-xorg weston wayland-protocols"
     for pkg in $FORBIDDEN_PKGS; do

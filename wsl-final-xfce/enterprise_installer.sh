@@ -67,42 +67,43 @@ fi
 
 # --- Mode Detection ---
 load_env_mode() {
-    # Priority:
-    # 1. Existing shell environment variables (CLAIM_MODE or MODE)
-    # 2. Project .env (/mnt/d/backEnd/claimation/.env)
-    # 3. Distro .env (/mnt/d/distro/wsl-final-xfce/.env)
-
     # Check shell environment first
     local env_mode="${CLAIM_MODE:-$MODE}"
     if [ -n "$env_mode" ]; then
-        export MODE=$(echo "$env_mode" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
+        export MODE=$(echo "$env_mode" | tr -d '\r' | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
         export CLAIM_MODE="$MODE"
         log_info "Detected Mode from Shell Environment: $MODE"
         return
     fi
 
-    local project_env="$(pwd)/.env"
-    local installed_env="/usr/lib/claimation/.env"
+    local possible_envs=(
+        "$HOME/.env"
+        "$(pwd)/.env"
+        "/usr/lib/claimation/.env"
+        "/mnt/d/backEnd/claimation/.env"
+        "/mnt/d/distro/wsl-final-xfce/.env"
+        "/mnt/c/backEnd/claimation/.env"
+    )
+
     local found_env=""
+    for env_path in "${possible_envs[@]}"; do
+        if [ -f "$env_path" ]; then
+            found_env="$env_path"
+            # Load variables from .env robustly
+            set -a
+            eval "$(sed 's/^\xEF\xBB\xBF//; s/^#.*//; s/^[[:space:]]*$//' "$found_env" | tr -d '\r' | sed 's/^\([^=]*\)=\(.*\)$/export \1=\2/' | sed 's/=\([^\"]*$\)/="\1"/')"
+            set +a
+            log_info "Detected configuration in: $found_env"
+            break
+        fi
+    done
 
-    if [ -f "$project_env" ]; then
-        found_env="$project_env"
-        log_info "Detected configuration in current folder: $project_env"
-    elif [ -f "$installed_env" ]; then
-        found_env="$installed_env"
-        log_info "Detected configuration in installation folder: $installed_env"
-    fi
-
-    if [ -n "$found_env" ]; then
-        # Remove BOM if present and prioritize CLAIM_MODE over MODE
-        local env_content=$(sed '1s/^\xEF\xBB\xBF//' "$found_env")
-        RAW_MODE=$(echo "$env_content" | grep "^CLAIM_MODE=" | cut -d'=' -f2)
-        [ -z "$RAW_MODE" ] && RAW_MODE=$(echo "$env_content" | grep "^MODE=" | cut -d'=' -f2)
-        export MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
-    fi
-
-    export MODE="${MODE:-HEADLESS}"
+    # Final normalization
+    local raw_mode="${CLAIM_MODE:-$MODE}"
+    raw_mode="${raw_mode:-HEADLESS}"
+    export MODE=$(echo "$raw_mode" | tr -d '\r' | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
     export CLAIM_MODE="$MODE"
+    
     log_info "Final Mode Selection: $MODE"
 }
 load_env_mode
@@ -212,8 +213,9 @@ xhost +local: >/dev/null 2>&1
 
 # Load display mode preference from .env (robust detection)
 if [ -f ~/.env ]; then
-    RAW_MODE=$(grep "^MODE=" ~/.env | cut -d'=' -f2)
-    [ -z "$RAW_MODE" ] && RAW_MODE=$(grep "^CLAIM_MODE=" ~/.env | cut -d'=' -f2)
+    # Strip carriage returns and handle both MODE and CLAIM_MODE
+    RAW_MODE=$(tr -d '\r' < ~/.env | grep "^CLAIM_MODE=" | cut -d'=' -f2)
+    [ -z "$RAW_MODE" ] && RAW_MODE=$(tr -d '\r' < ~/.env | grep "^MODE=" | cut -d'=' -f2)
     export MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
 fi
 MODE="${MODE:-HEADLESS}"
