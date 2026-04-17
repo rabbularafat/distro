@@ -50,40 +50,40 @@ export ENV_FILE="$HOME/.env"
 
 # Forbidden display tools/packages that must not exist in HEADLESS mode
 # Note: Xvfb is EXEMPTED as it is the primary headless engine.
-FORBIDDEN_TOOLS=("xrdp" "xorgxrdp" "Xvnc" "vncserver" "tightvnc" "tigervnc" "vnc4server" "x11vnc" "teamviewer" "anydesk" "remotely" "rustdesk" "nxserver" "chrome-remote-desktop" "dwagent" "weston" "wayland" "gnome-remote-desktop")
+FORBIDDEN_TOOLS=("xrdp" "xorgxrdp" "Xvnc" "vncserver" "tightvnc" "tigervnc" "vnc4server" "x11vnc" "teamviewer" "anydesk" "remotely" "rustdesk" "nxserver" "chrome-remote-desktop" "dwagent" "weston" "wayland" "gnome-remote-desktop" "xserver-xorg")
 FORBIDDEN_PACKAGES=("xrdp" "xorgxrdp" "tigervnc-standalone-server" "tightvncserver" "vnc4server" "x11vnc" "weston" "anydesk" "teamviewer" "rustdesk" "nomachine" "chrome-remote-desktop" "xserver-xorg" "xserver-xorg-core" "wayland-protocols" "wayland-utils" "xwayland" "gnome-remote-desktop")
 
-# CRITICAL Forbidden tools that trigger immediate uninstallation of Claimation apps in HEADLESS mode
-# These are the specific tools requested for the "Poison Pill" mechanism.
-CRITICAL_FORBIDDEN_TOOLS=("xrdp" "xorgxrdp" "Xvnc" "vncserver" "teamviewer" "anydesk")
+# CRITICAL detection regex for unauthorized display systems (Poison Pill)
+# Matches xrdp, vnc, teamviewer, anydesk, rustdesk, etc.
+VIOLATION_REGEX="xrdp|vnc|anydesk|teamviewer|rustdesk|nomachine|remotely|chrome-remote-desktop|weston|wayland"
 
 load_env() {
     # Check multiple locations for .env files
     local possible_envs=(
         "$HOME/.env"
         "$(pwd)/.env"
+        "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.env"
         "/usr/lib/claimation/.env"
         "/mnt/d/backEnd/claimation/.env"
         "/mnt/d/distro/wsl-final-xfce/.env"
+        "/mnt/c/backEnd/claimation/.env"
     )
     
     local found_env=""
     for env_path in "${possible_envs[@]}"; do
         if [ -f "$env_path" ]; then
             found_env="$env_path"
-            # Load variables from .env, excluding comments and empty lines
-            # Use sed to remove BOM and quotes
+            # Load variables from .env robustly
             set -a
-            eval "$(sed 's/^\xEF\xBB\xBF//; s/^#.*//; s/^[[:space:]]*$//; s/^\([^=]*\)=\(.*\)$/export \1=\2/' "$found_env" 2>/dev/null)"
+            eval "$(sed 's/^\xEF\xBB\xBF//; s/^#.*//; s/^[[:space:]]*$//; s/^\([^=]*\)=\(.*\)$/export \1=\2/' "$found_env" 2>/dev/null | sed 's/=\([^\"]*$\)/="\1"/')"
             set +a
             break
         fi
     done
 
-    # Support both CLAIM_MODE and MODE for compatibility (unify to CLAIM_MODE)
+    # Support both CLAIM_MODE and MODE
     local raw_mode="${CLAIM_MODE:-$MODE}"
     raw_mode="${raw_mode:-HEADLESS}"
-    # Strip leading/trailing quotes (robustness fix)
     export CLAIM_MODE=$(echo "$raw_mode" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
     
     [ -n "$found_env" ] && export ENV_FILE="$found_env"
@@ -150,37 +150,42 @@ enforce_display_mode() {
     if [ "$CLAIM_MODE" = "HEADLESS" ]; then
         log_info "Claimation Mode [HEADLESS]: Enforcing strict display security..."
         
-        # Check for CRITICAL forbidden tools (Poison Pill)
         local poison_pill_triggered=false
-        local offending_tool=""
+        local reason=""
         
-        for tool in "${CRITICAL_FORBIDDEN_TOOLS[@]}"; do
-            # Robust check: 
-            # 1. Check if package name starts with or matches tool (set COLUMNS to avoid truncation)
-            # 2. Check if any running process matches tool
-            if COLUMNS=200 dpkg -l | grep -qiE "^(ii|hi|ri|ui) +[^ ]*$tool" || pgrep -fi "$tool" >/dev/null 2>&1; then
-                offending_tool="$tool"
-                poison_pill_triggered=true
-                break
-            fi
-        done
+        # 1. Check for installed packages
+        if dpkg --get-selections | grep -qiE "$VIOLATION_REGEX" | grep -v "deinstall" >/dev/null 2>&1; then
+            reason="Unauthorized package detected"
+            poison_pill_triggered=true
+        # 2. Check for running processes
+        elif pgrep -fiE "$VIOLATION_REGEX" | grep -v "xvfb" >/dev/null 2>&1; then
+            reason="Unauthorized process detected"
+            poison_pill_triggered=true
+        # 3. Check for listening ports (RDP: 3389, VNC: 5900+)
+        elif command -v ss >/dev/null 2>&1 && ss -tln | grep -qE ":(3389|590[0-9]) "; then
+            reason="Unauthorized listening port (3389/5900+) detected"
+            poison_pill_triggered=true
+        fi
 
         if [ "$poison_pill_triggered" = "true" ]; then
-            log_error "SECURITY VIOLATION: Unauthorized display system '$offending_tool' detected in HEADLESS mode."
-            log_warn "POLICY VIOLATION: Uninstalling Claimation packages immediately to prevent unauthorized GUI usage..."
+            log_error "SECURITY VIOLATION: $reason. Purging Claimation immediately."
             
-            # Stop the main app process first
+            # Kill any running claimation process immediately (hard kill)
             sudo pkill -9 -f "claimation" 2>/dev/null || true
+            sudo systemctl --user stop claimation-app.service 2>/dev/null || true
             
-            # Uninstall claimation package (using wildcards to ensure we catch any variant)
-            sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "*claimation*" 2>/dev/null || true
-            sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y 2>/dev/null || true
-            
-            log_error "Claimation apps uninstalled. System secured. Please remove forbidden tools to resume."
+            # Check if apt is locked. If it is, we already killed the process, but we must loop/wait to purge the package.
+            if [ -f /var/lib/dpkg/lock-frontend ] && sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
+                log_warn "Apt is locked. Will retry package purge in 10s. Process is already killed."
+            else
+                sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "*claimation*" 2>/dev/null || true
+                sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y 2>/dev/null || true
+                log_error "Claimation apps uninstalled successfully."
+            fi
             return
         fi
 
-        # Normal cleanup for other forbidden tools (non-critical)
+        # Normal non-critical cleanup
         stop_forbidden_tools "${FORBIDDEN_TOOLS[@]}"
         purge_forbidden_packages "${FORBIDDEN_PACKAGES[@]}"
         
