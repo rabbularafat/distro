@@ -181,6 +181,9 @@ install_xfce() {
 install_xrdp_and_xvfb() {
     log_step "Installing XRDP + Xvfb (Virtual Framebuffer)"
 
+    # Stop any existing display monitor to prevent purge-loops during install
+    systemctl --user stop display-monitor.service 2>/dev/null || true
+
     # Install Xvfb (always required for 24/7 background headless operation)
     # xclip is required by pyperclip for clipboard operations on X11
     log_info "Installing Xvfb and X11 utilities..."
