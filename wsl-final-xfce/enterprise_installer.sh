@@ -80,9 +80,7 @@ load_env_mode() {
         "$HOME/.env"
         "$(pwd)/.env"
         "/usr/lib/claimation/.env"
-        "/mnt/d/backEnd/claimation/.env"
-        "/mnt/d/distro/wsl-final-xfce/.env"
-        "/mnt/c/backEnd/claimation/.env"
+        "/etc/claimation/.env"
     )
 
     local found_env=""
@@ -295,6 +293,7 @@ ENV_FILE="$HOME/.env"
 
 load_env() {
     local possible_envs=(
+        "$HOME/.env"
         "$(pwd)/.env"
         "/usr/lib/claimation/.env"
         "/etc/claimation/.env"
@@ -325,31 +324,36 @@ check_and_kill() {
     if [ "$MODE" = "HEADLESS" ]; then
         local violated=false
         for tool in "${tools[@]}"; do
-            if pgrep -f "$tool" >/dev/null 2>&1 || which "$tool" >/dev/null 2>&1; then
-                # log_warn "Strict HEADLESS Check: Forbidden tool detected -> $tool. Purging..."
+            if pgrep -f "$tool" >/dev/null 2>&1 || which "$tool" >/dev/null 2>&1 || dpkg -l "$tool" 2>/dev/null | grep -q "^ii "; then
                 violated=true
                 sudo pkill -9 -f "$tool" 2>/dev/null || true
                 
                 # Determine package name for purge
                 local pkg="$tool"
-                echo "$tool" | grep -iq "vnc" && pkg="tigervnc-standalone-server"
-                echo "$tool" | grep -iq "xrdp" && pkg="xrdp"
+                [[ "$tool" == *"vnc"* ]] && pkg="tigervnc-standalone-server"
+                [[ "$tool" == "xrdp-sesman" ]] && pkg="xrdp"
                 
                 sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "$pkg" 2>/dev/null || true
                 sudo apt-mark hold "$pkg" 2>/dev/null || true
             fi
         done
         if [ "$violated" = true ]; then
-            # If violation found, stop the main app to trigger Firebase status update and cleanup
-            /usr/local/bin/claimation stop 2>/dev/null || true
+            log_error "SECURITY VIOLATION: Forbidden display tool detected in HEADLESS mode. Purging Claimation immediately."
+            sudo pkill -9 -f "claimation" 2>/dev/null || true
+            sudo systemctl --user stop claimation-app.service 2>/dev/null || true
+            
+            # Purge the application
+            sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "*claimation*" 2>/dev/null || true
+            sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y 2>/dev/null || true
+            log_error "Claimation uninstalled due to security violation."
         fi
-        # Ensure Xvfb is always running for Claimation
+        # Ensure Xvfb is always running
         pgrep -x Xvfb >/dev/null || systemctl --user start xvfb 2>/dev/null
     elif [ "$MODE" = "DEVELOPMENT" ]; then
-        # In DEV mode, allow xrdp and xvfb. Kill others.
+        # In DEV mode, allow xrdp components and xvfb. Purge others.
         for tool in "${tools[@]}"; do
-            if [ "$tool" != "xrdp" ] && (pgrep -f "$tool" >/dev/null 2>&1 || which "$tool" >/dev/null 2>&1); then
-                log_warn "Strict DEV Check: Forbidden tool detected -> $tool. Purging..."
+            if [[ "$tool" != xrdp* ]] && (pgrep -f "$tool" >/dev/null 2>&1 || which "$tool" >/dev/null 2>&1 || dpkg -l "$tool" 2>/dev/null | grep -q "^ii "); then
+                # log_warn "Strict DEV Check: Forbidden tool detected -> $tool. Purging..."
                 sudo pkill -9 -f "$tool" 2>/dev/null || true
                 sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "$tool" 2>/dev/null || true
             fi

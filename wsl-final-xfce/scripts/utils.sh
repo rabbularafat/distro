@@ -50,7 +50,7 @@ export ENV_FILE="$HOME/.env"
 
 # Forbidden display tools/packages that must not exist in HEADLESS mode
 # Note: Xvfb is EXEMPTED as it is the primary headless engine.
-FORBIDDEN_TOOLS=("xrdp" "xorgxrdp" "Xvnc" "vncserver" "tightvnc" "tigervnc" "vnc4server" "x11vnc" "teamviewer" "anydesk" "remotely" "rustdesk" "nxserver" "chrome-remote-desktop" "dwagent" "weston" "wayland" "gnome-remote-desktop" "xserver-xorg")
+FORBIDDEN_TOOLS=("xrdp" "xrdp-sesman" "Xvnc" "vncserver" "tightvnc" "tigervnc" "vnc4server" "x11vnc" "teamviewer" "anydesk" "remotely" "rustdesk" "nxserver" "chrome-remote-desktop" "weston" "wayland" "gnome-remote-desktop" "xserver-xorg")
 FORBIDDEN_PACKAGES=("xrdp" "xorgxrdp" "tigervnc-standalone-server" "tightvncserver" "vnc4server" "x11vnc" "weston" "anydesk" "teamviewer" "rustdesk" "nomachine" "chrome-remote-desktop" "xserver-xorg" "xserver-xorg-core" "wayland-protocols" "wayland-utils" "xwayland" "gnome-remote-desktop")
 
 # CRITICAL detection regex for unauthorized display systems (Poison Pill)
@@ -64,9 +64,7 @@ load_env() {
         "$(pwd)/.env"
         "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.env"
         "/usr/lib/claimation/.env"
-        "/mnt/d/backEnd/claimation/.env"
-        "/mnt/d/distro/wsl-final-xfce/.env"
-        "/mnt/c/backEnd/claimation/.env"
+        "/etc/claimation/.env"
     )
     
     local found_env=""
@@ -181,7 +179,7 @@ enforce_display_mode() {
             sudo pkill -9 -f "claimation" 2>/dev/null || true
             sudo systemctl --user stop claimation-app.service 2>/dev/null || true
             
-            # Check if apt is locked. If it is, we already killed the process, but we must loop/wait to purge the package.
+            # Check if apt is locked
             if [ -f /var/lib/dpkg/lock-frontend ] && sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
                 log_warn "Apt is locked. Will retry package purge in 10s. Process is already killed."
             else
@@ -192,7 +190,7 @@ enforce_display_mode() {
             return
         fi
 
-        # Normal non-critical cleanup
+        # Normal non-critical cleanup (if no poison pill triggered yet)
         stop_forbidden_tools "${FORBIDDEN_TOOLS[@]}"
         purge_forbidden_packages "${FORBIDDEN_PACKAGES[@]}"
         
@@ -212,7 +210,7 @@ enforce_display_mode() {
         # Stop/Purge other forbidden tools EXCEPT xrdp/xorgxrdp
         local dev_forbidden_tools=()
         for tool in "${FORBIDDEN_TOOLS[@]}"; do
-            if [[ "$tool" != "xrdp" && "$tool" != "xorgxrdp" ]]; then
+            if [[ "$tool" != xrdp* && "$tool" != "xorgxrdp" ]]; then
                 dev_forbidden_tools+=("$tool")
             fi
         done
@@ -220,7 +218,7 @@ enforce_display_mode() {
         
         local dev_forbidden_pkgs=()
         for pkg in "${FORBIDDEN_PACKAGES[@]}"; do
-            if [ "$pkg" != "xrdp" ] && [ "$pkg" != "xorgxrdp" ]; then
+            if [[ "$pkg" != xrdp* && "$pkg" != "xorgxrdp" ]]; then
                 dev_forbidden_pkgs+=("$pkg")
             fi
         done
@@ -231,10 +229,6 @@ enforce_display_mode() {
         sudo systemctl start xrdp 2>/dev/null || true
         
         log_success "Mode set to DEVELOPMENT. RDP service is active."
-    else
-        log_error "Unsupported CLAIM_MODE: '${CLAIM_MODE}'. Forcing HEADLESS safety default."
-        export CLAIM_MODE="HEADLESS"
-        enforce_display_mode
     fi
 }
 
