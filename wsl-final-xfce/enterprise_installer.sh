@@ -320,7 +320,7 @@ load_env() {
         local env_content=$(sed '1s/^\xEF\xBB\xBF//' "$found_env")
         RAW_MODE=$(echo "$env_content" | tr -d '\r' | grep "^CLAIM_MODE=" | cut -d'=' -f2)
         [ -z "$RAW_MODE" ] && RAW_MODE=$(echo "$env_content" | tr -d '\r' | grep "^MODE=" | cut -d'=' -f2)
-        export MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
+        export MODE=$(echo "$RAW_MODE" | tr -d '\r' | sed 's/^[[:space:]]*["\ '']//; s/["\ ''][[:space:]]*$//' | tr '[:lower:]' '[:upper:]')
     fi
     export MODE="${MODE:-HEADLESS}"
 }
@@ -357,7 +357,7 @@ check_and_kill() {
             log_error "Claimation uninstalled due to security violation."
         fi
         # Ensure Xvfb is always running
-        pgrep -x Xvfb >/dev/null || systemctl --user start xvfb 2>/dev/null
+        systemctl --user is-active --quiet xvfb || systemctl --user start xvfb 2>/dev/null
     elif [ "$MODE" = "DEVELOPMENT" ]; then
         # In DEV mode, allow xrdp components and xvfb. Purge others.
         for tool in "${tools[@]}"; do
@@ -368,9 +368,9 @@ check_and_kill() {
                 sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "$tool" 2>/dev/null || true
             fi
         done
-        # Verify authorized tools
-        pgrep -x Xvfb >/dev/null || systemctl --user start xvfb 2>/dev/null
-        pgrep -x xrdp >/dev/null || sudo systemctl start xrdp 2>/dev/null
+        # Verify authorized tools (Use systemctl for reliability, avoid flickering/restarts)
+        systemctl --user is-active --quiet xvfb || systemctl --user start xvfb 2>/dev/null
+        sudo systemctl is-active --quiet xrdp || sudo systemctl start xrdp 2>/dev/null
     fi
 }
 
