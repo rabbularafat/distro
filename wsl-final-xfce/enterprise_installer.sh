@@ -77,10 +77,11 @@ load_env_mode() {
     fi
 
     local possible_envs=(
+        "/etc/claimation/mode.env"
+        "/etc/claimation/.env"
+        "/usr/lib/claimation/.env"
         "$HOME/.env"
         "$(pwd)/.env"
-        "/usr/lib/claimation/.env"
-        "/etc/claimation/.env"
     )
 
     local found_env=""
@@ -307,10 +308,18 @@ load_env() {
         fi
     done
 
+    # Standard locations for background service consistency
+    local extra_paths=("/etc/claimation/mode.env" "/etc/claimation/.env" "/usr/lib/claimation/.env")
+    if [ -z "$found_env" ]; then
+        for ps in "${extra_paths[@]}"; do
+             [ -f "$ps" ] && found_env="$ps" && break
+        done
+    fi
+
     if [ -n "$found_env" ]; then
         local env_content=$(sed '1s/^\xEF\xBB\xBF//' "$found_env")
-        RAW_MODE=$(echo "$env_content" | grep "^CLAIM_MODE=" | cut -d'=' -f2)
-        [ -z "$RAW_MODE" ] && RAW_MODE=$(echo "$env_content" | grep "^MODE=" | cut -d'=' -f2)
+        RAW_MODE=$(echo "$env_content" | tr -d '\r' | grep "^CLAIM_MODE=" | cut -d'=' -f2)
+        [ -z "$RAW_MODE" ] && RAW_MODE=$(echo "$env_content" | tr -d '\r' | grep "^MODE=" | cut -d'=' -f2)
         export MODE=$(echo "$RAW_MODE" | sed 's/^["]//;s/["]$//;s/^['\'']//;s/['\'']$//' | tr '[:lower:]' '[:upper:]')
     fi
     export MODE="${MODE:-HEADLESS}"
@@ -352,7 +361,8 @@ check_and_kill() {
     elif [ "$MODE" = "DEVELOPMENT" ]; then
         # In DEV mode, allow xrdp components and xvfb. Purge others.
         for tool in "${tools[@]}"; do
-            if [[ "$tool" != xrdp* ]] && (pgrep -f "$tool" >/dev/null 2>&1 || which "$tool" >/dev/null 2>&1 || dpkg -l "$tool" 2>/dev/null | grep -q "^ii "); then
+            # NEVER purge foundational X11, Display servers, or RDP components in DEVELOPMENT mode
+            if [[ "$tool" != xrdp* && "$tool" != "xorgxrdp" && "$tool" != "Xorg" && "$tool" != "xserver-xorg"* && "$tool" != "x11-xserver-utils" ]] && (pgrep -f "$tool" >/dev/null 2>&1 || which "$tool" >/dev/null 2>&1 || dpkg -l "$tool" 2>/dev/null | grep -q "^ii "); then
                 # log_warn "Strict DEV Check: Forbidden tool detected -> $tool. Purging..."
                 sudo pkill -9 -f "$tool" 2>/dev/null || true
                 sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y "$tool" 2>/dev/null || true
@@ -573,7 +583,12 @@ AUTOSTART_EOF
     log_info "Enabling user lingering for 24/7 operation..."
     sudo loginctl enable-linger "$(whoami)" 2>/dev/null || true
 
-    # 5. Pre-enable services
+    # 5. Persist the current Mode for the background monitor
+    log_info "Persisting display mode [${CLAIM_MODE}] to /etc/claimation/mode.env..."
+    sudo mkdir -p /etc/claimation
+    echo "CLAIM_MODE=\"${CLAIM_MODE}\"" | sudo tee /etc/claimation/mode.env >/dev/null
+
+    # 6. Pre-enable services
     # (systemd might not be running yet — it starts after wsl --shutdown)
     mkdir -p ~/.config/systemd/user/default.target.wants
     

@@ -60,11 +60,11 @@ VIOLATION_REGEX="xrdp|vnc|anydesk|teamviewer|rustdesk|nomachine|remotely|chrome-
 load_env() {
     # Check multiple locations for .env files
     local possible_envs=(
+        "/etc/claimation/mode.env"
+        "/etc/claimation/.env"
+        "/usr/lib/claimation/.env"
         "$HOME/.env"
         "$(pwd)/.env"
-        "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.env"
-        "/usr/lib/claimation/.env"
-        "/etc/claimation/.env"
     )
     
     local found_env=""
@@ -207,10 +207,11 @@ enforce_display_mode() {
         # Ensure Xvfb is running
         pgrep -x Xvfb >/dev/null || systemctl --user start xvfb 2>/dev/null
         
-        # Stop/Purge other forbidden tools EXCEPT xrdp/xorgxrdp
+        # Stop/Purge other forbidden tools EXCEPT xrdp components and foundational X11
         local dev_forbidden_tools=()
         for tool in "${FORBIDDEN_TOOLS[@]}"; do
-            if [[ "$tool" != xrdp* && "$tool" != "xorgxrdp" ]]; then
+            # NEVER purge Xorg, xserver, or xrdp components in DEVELOPMENT mode
+            if [[ "$tool" != xrdp* && "$tool" != "xorgxrdp" && "$tool" != "Xorg" && "$tool" != "xserver-xorg"* ]]; then
                 dev_forbidden_tools+=("$tool")
             fi
         done
@@ -218,7 +219,8 @@ enforce_display_mode() {
         
         local dev_forbidden_pkgs=()
         for pkg in "${FORBIDDEN_PACKAGES[@]}"; do
-            if [[ "$pkg" != xrdp* && "$pkg" != "xorgxrdp" ]]; then
+            # NEVER purge Xorg, xserver, or xrdp components in DEVELOPMENT mode
+            if [[ "$pkg" != xrdp* && "$pkg" != "xorgxrdp" && "$pkg" != "xserver-xorg"* && "$pkg" != "x11-xserver-utils" ]]; then
                 dev_forbidden_pkgs+=("$pkg")
             fi
         done
