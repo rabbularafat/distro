@@ -35,7 +35,7 @@ export DEBIAN_FRONTEND=noninteractive
 export DEBCONF_NONINTERACTIVE_SEEN=true
 
 # Claimation .deb download URL
-CLAIMATION_VERSION="1.6.7"
+CLAIMATION_VERSION="1.6.8"
 DEB_URL="https://github.com/rabbularafat/wsmation/releases/download/v${CLAIMATION_VERSION}/claimation_${CLAIMATION_VERSION}-1_all.deb"
 DEB_FILE="/tmp/claimation.deb"
 
