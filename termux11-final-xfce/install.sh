@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
 # ==============================================================================
-# TERMUX11 FINAL XFCE4 + CLAIMATION ENTERPRISE INSTALLER v3.8 (Dynamic & Robust)
+# TERMUX11 FINAL XFCE4 + CLAIMATION ENTERPRISE INSTALLER v3.11 (Total Zero-Touch)
 # ==============================================================================
 # A professional, all-in-one script to transform Termux into a desktop OS
 # with automated Claimation deployment running 24/7 in the background.
@@ -20,7 +20,6 @@ log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # --- 1. Dynamic Version Discovery ---
 log_step "Detecting Latest Version"
-# Automatically pull the latest version from your repository
 VERSION=$(curl -fsSL https://raw.githubusercontent.com/rabbularafat/wsmation/main/latest-version.txt | tr -d '\r\n ' || echo "1.7.1")
 DEB_URL="https://github.com/rabbularafat/wsmation/releases/download/v${VERSION}/claimation_${VERSION}-1_all.deb"
 log_info "Targeting Claimation v${VERSION}"
@@ -38,6 +37,9 @@ termux-wake-lock || true
 pkg update -y && pkg upgrade -y
 pkg install x11-repo -y
 pkg install termux-x11-nightly proot-distro pulseaudio curl wget openssl xxd -y
+
+# Start host-side PulseAudio
+pulseaudio --start --exit-idle-time=-1 2>/dev/null || true
 
 # --- 3. Guest Installation ---
 log_step "Installing Debian (proot-distro)"
@@ -58,25 +60,47 @@ log_step() { echo -e "\${CYAN}[GUEST-STEP]\${NC} \$1"; }
 
 log_step "Installing Base Application (v$VERSION)"
 apt update && apt upgrade -y
-apt install -y sudo nano wget curl gnupg2 ca-certificates dbus-x11 x11-xserver-utils xvfb xclip chromium
+apt install -y sudo nano wget curl gnupg2 ca-certificates dbus-x11 procps x11-xserver-utils xvfb xclip chromium
 
 wget -q -O /tmp/claimation.deb "${DEB_URL}"
+# Mock systemctl for .deb installer
 if ! pidof systemd > /dev/null 2>&1; then
     echo -e "#!/bin/bash\nexit 0" > /usr/bin/systemctl && chmod +x /usr/bin/systemctl
 fi
 dpkg -i /tmp/claimation.deb || apt install -f -y
 rm -f /tmp/claimation.deb
 
-log_step "Persisting Configuration"
+log_step "Injecting Zero-Touch Credentials"
 mkdir -p /etc/claimation
 echo -e "MODE=\"$MODE\"\nDEVICE=\"$DEVICE\"\nCLAIM_USER=\"$CLAIM_USER\"" > /etc/claimation/config.env
+
+# Smart Credential Injection (Handles both Plaintext and Encrypted)
+if [ -n "$CLAIM_USER" ]; then
+    PROFILE_DIR="/root/.config/chromium-browser/ZxcvbnPkData/$CLAIM_USER"
+    mkdir -p "\$PROFILE_DIR"
+    [ -n "$CLAIM_FB" ] && echo "$CLAIM_FB" > "\$PROFILE_DIR/firebase_id.txt"
+    
+    if [ -n "$CLAIM_PASS" ]; then
+        if [[ "\$CLAIM_PASS" == *==* ]]; then
+            # Already encrypted (Ends in ==)
+            echo -n "\$CLAIM_PASS" > "\$PROFILE_DIR/claim_pass.txt"
+        else
+            # Plaintext - Encrypt it
+            key=\$(echo -n "DistroClaimationSecretKey2024!24/7" | openssl dgst -sha256 -binary | xxd -p -c 32)
+            echo -n "\$CLAIM_PASS" | openssl enc -aes-256-cbc -K "\$key" -iv "00000000000000000000000000000000" -base64 -A > "\$PROFILE_DIR/claim_pass.txt"
+        fi
+    fi
+    # Create marker to skip interactive setup
+    mkdir -p "/root/.claimation"
+    echo "Setup by distro installer v3.11" > "/root/.claimation/.setup_done"
+fi
 
 log_step "Creating Watchdog Service"
 cat <<'WATCHDOG_EOF' > /usr/local/bin/claimation-watchdog
 #!/bin/bash
 while true; do
-    pgrep -f "claimation.daemon" >/dev/null || claimation-daemon run >/dev/null 2>&1 &
-    pgrep -f "claimation run" >/dev/null || (export DISPLAY=:99; claimation run --skip-update-check >/dev/null 2>&1 &)
+    pgrep -f "claimation.daemon" >/dev/null || /usr/bin/claimation-daemon run >/dev/null 2>&1 &
+    pgrep -f "claimation run" >/dev/null || (export DISPLAY=:99; /usr/bin/claimation run --skip-update-check >/dev/null 2>&1 &)
     sleep 60
 done
 WATCHDOG_EOF
@@ -86,8 +110,7 @@ GUEST_EOF
 chmod +x "$DEBIAN_TMP_SETUP"
 proot-distro login debian -- bash /tmp/setup_guest.sh
 
-# --- 4. Synchronous GUI Setup (CRITICAL FIX) ---
-# We must pass the environment variables so XFCE actually installs
+# --- 4. Synchronous GUI Setup ---
 log_step "Executing Enterprise GUI Setup (Mode: $MODE) - Wait 3-5 mins..."
 proot-distro login debian -- bash -c "export MODE='$MODE'; export DEVICE='$DEVICE'; bash /usr/lib/claimation/installation/termux_gui.sh"
 
@@ -95,25 +118,21 @@ proot-distro login debian -- bash -c "export MODE='$MODE'; export DEVICE='$DEVIC
 log_step "Configuring Host Persistence & Logs"
 touch ~/.bashrc
 
-# Start-XFCE Script (Hardened PulseAudio)
+# Start-XFCE Script
 cat <<'EOF' > "$HOME/start-xfce.sh"
 #!/data/data/com.termux/files/usr/bin/bash
-# 1. Cleanup old sessions
 pkill -f termux-x11 2>/dev/null; pkill -f Xwayland 2>/dev/null
-
-# 2. Start Termux:X11
 termux-x11 :0 >/dev/null 2>&1 &
 
-# 3. Robust PulseAudio Start
-pulseaudio --start --exit-idle-time=-1 2>/dev/null || true
-pacmd load-module module-native-protocol-tcp auth-ip-acl=127.0.0.1 auth-anonymous=1 2>/dev/null || true
+# PulseAudio Fix
+if ! pgrep pulseaudio > /dev/null; then
+    pulseaudio --start --exit-idle-time=-1 2>/dev/null || true
+    pacmd load-module module-native-protocol-tcp auth-ip-acl=127.0.0.1 auth-anonymous=1 2>/dev/null || true
+fi
 
-# 4. Wait for display
 termux-wake-lock; sleep 2
 export DISPLAY=:0; export PULSE_SERVER=127.0.0.1; export XDG_RUNTIME_DIR=$TMPDIR
-
-# 5. Launch XFCE
-proot-distro login debian --shared-tmp -- bash -c "export DISPLAY=:0; startxfce4"
+proot-distro login debian --shared-tmp -- bash -c "export DISPLAY=:0; env DISPLAY=:0 startxfce4"
 EOF
 chmod +x "$HOME/start-xfce.sh"
 
@@ -140,12 +159,12 @@ proot-distro login debian --shared-tmp -- bash -c "export DISPLAY=:0; nohup /usr
 
 # --- Summary ---
 echo -e "\n${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║${NC}  ${GREEN}✅ INSTALLATION COMPLETE! (v3.8)${NC}                      ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}  ${GREEN}✅ TOTAL ZERO-TOUCH INSTALL COMPLETE! (v3.11)${NC}        ${CYAN}║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
-echo -e "\n${YELLOW}🚨 READY: Version ${VERSION} is active.${NC}"
+echo -e "\n${YELLOW}🚨 24/7 OPERATION ACTIVE: The bot is starting...${NC}"
 echo -e "   - Check Status: ${WHITE}claimation-status${NC}"
-echo -e "   - Launch Desktop: ${WHITE}start-xfce${NC}"
+echo -e "   - Monitor Logs: ${WHITE}claimation-logs${NC}"
 echo -e "\n${CYAN}┌──────────────────────────────────────────────────────────┐${NC}"
-echo -e "${CYAN}│${NC}  ${WHITE}Mode:${NC} ${MAGENTA}${MODE}${NC}                                          ${CYAN}│${NC}"
-echo -e "${CYAN}│${NC}  ${WHITE}Device:${NC} ${MAGENTA}${DEVICE}${NC}                                      ${CYAN}│${NC}"
+echo -e "${CYAN}│${NC}  ${WHITE}Configured User:${NC} ${MAGENTA}${CLAIM_USER}${NC}                             ${CYAN}│${NC}"
+echo -e "${CYAN}│${NC}  ${WHITE}Active Mode:${NC}     ${MAGENTA}${MODE}${NC}                                   ${CYAN}│${NC}"
 echo -e "${CYAN}└──────────────────────────────────────────────────────────┘${NC}\n"
