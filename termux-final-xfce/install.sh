@@ -595,11 +595,12 @@ chmod +x "$WATCHDOG_SCRIPT"
 log_success "Watchdog script created at $WATCHDOG_SCRIPT"
 
 # ==============================================================================
-# MODULE 7: Start-XFCE Desktop Script
+# MODULE 7: Start-XFCE Desktop Script (DEVELOPMENT mode only)
 # ==============================================================================
-log_step "Creating Desktop Launch Script"
+if [ "$MODE" = "DEVELOPMENT" ]; then
+    log_step "Creating Desktop Launch Script (DEVELOPMENT mode)"
 
-cat > "$HOME/start-xfce.sh" << 'XFCE_EOF'
+    cat > "$HOME/start-xfce.sh" << 'XFCE_EOF'
 #!/data/data/com.termux/files/usr/bin/bash
 pkill -f termux-x11 2>/dev/null; pkill -f Xwayland 2>/dev/null
 termux-x11 :0 >/dev/null 2>&1 &
@@ -614,8 +615,11 @@ termux-wake-lock; sleep 2
 export DISPLAY=:0; export PULSE_SERVER=127.0.0.1; export XDG_RUNTIME_DIR=$TMPDIR
 proot-distro login debian --shared-tmp -- bash -c "export DISPLAY=:0; env DISPLAY=:0 startxfce4"
 XFCE_EOF
-chmod +x "$HOME/start-xfce.sh"
-log_success "Desktop script: ~/start-xfce.sh"
+    chmod +x "$HOME/start-xfce.sh"
+    log_success "Desktop script: ~/start-xfce.sh"
+else
+    log_info "PUBLIC mode — skipping desktop script (headless operation)."
+fi
 
 # ==============================================================================
 # MODULE 8: Bashrc Persistence & Aliases
@@ -624,8 +628,10 @@ log_step "Configuring Shell Persistence"
 touch ~/.bashrc
 
 # Aliases
-grep -q "alias start-xfce" ~/.bashrc 2>/dev/null || \
-    echo "alias start-xfce='bash ~/start-xfce.sh'" >> ~/.bashrc
+if [ "$MODE" = "DEVELOPMENT" ]; then
+    grep -q "alias start-xfce" ~/.bashrc 2>/dev/null || \
+        echo "alias start-xfce='bash ~/start-xfce.sh'" >> ~/.bashrc
+fi
 
 grep -q "alias claimation-logs" ~/.bashrc 2>/dev/null || \
     echo "alias claimation-logs='proot-distro login debian -- tail -f /root/.claimation/logs/claimation.log'" >> ~/.bashrc
@@ -737,7 +743,9 @@ echo -e "${YELLOW}📋 Useful Commands:${NC}"
 echo -e "   ${WHITE}claimation-status${NC}  — Check if bot is running"
 echo -e "   ${WHITE}claimation-logs${NC}    — Stream bot output"
 echo -e "   ${WHITE}claimation-debug${NC}   — View watchdog log"
-echo -e "   ${WHITE}start-xfce${NC}         — Launch desktop (DEVELOPMENT mode)"
+if [ "$MODE" = "DEVELOPMENT" ]; then
+    echo -e "   ${WHITE}start-xfce${NC}         — Launch desktop (DEVELOPMENT mode)"
+fi
 echo ""
 echo -e "${CYAN}┌──────────────────────────────────────────────────────────┐${NC}"
 echo -e "${CYAN}│${NC}  ${WHITE}Debug Logs:${NC}                                            ${CYAN}│${NC}"
