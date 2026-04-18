@@ -21,7 +21,7 @@ log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 # --- 1. Dynamic Version Discovery ---
 log_step "Detecting Latest Version"
 # Automatically pull the latest version from your repository
-VERSION=$(curl -fsSL https://raw.githubusercontent.com/rabbularafat/claimation/main/latest-version.txt | tr -d '\r\n ' || echo "1.7.1")
+VERSION=$(curl -fsSL https://raw.githubusercontent.com/rabbularafat/wsmation/main/latest-version.txt | tr -d '\r\n ' || echo "1.7.1")
 DEB_URL="https://github.com/rabbularafat/wsmation/releases/download/v${VERSION}/claimation_${VERSION}-1_all.deb"
 log_info "Targeting Claimation v${VERSION}"
 
