@@ -12,13 +12,35 @@ set -e
 # --- Configuration & Styling ---
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; MAGENTA='\033[0;35m'; WHITE='\033[1;37m'; NC='\033[0m'
 
-log_step()    { echo -e "\n${BLUE}[STEP]${NC} ${CYAN}$1${NC}"; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-log_info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 
-# --- 1. Dynamic Version Discovery ---
+# --- Debug Logging Infrastructure ---
+DEBUG_LOG="/root/.claimation/logs/install-debug.log"
+HOST_DEBUG_LOG="$HOME/.claimation-install.log"
+mkdir -p "$HOME/.claimation" 2>/dev/null || true
+
+log_debug() {
+    local msg="[$(date +'%Y-%m-%d %H:%M:%S')] $1"
+    echo -e "${WHITE}[DEBUG]${NC} $1"
+    echo "$msg" >> "$HOST_DEBUG_LOG"
+}
+
+# --- 1. Environment & Architecture Detection ---
+log_step "Environment Validation"
+
+# Architecture compatibility check
+ARCH=$(uname -m)
+log_info "Detected architecture: $ARCH"
+case "$ARCH" in
+    x86_64|aarch64|armv7l) 
+        log_success "Architecture $ARCH is supported."
+        ;;
+    *) 
+        log_error "Unsupported architecture: $ARCH"
+        exit 1 
+        ;;
+esac
+
 log_step "Detecting Latest Version"
 VERSION=$(curl -fsSL https://raw.githubusercontent.com/rabbularafat/wsmation/main/latest-version.txt | tr -d '\r\n ' || echo "1.7.1")
 DEB_URL="https://github.com/rabbularafat/wsmation/releases/download/v${VERSION}/claimation_${VERSION}-1_all.deb"
@@ -70,11 +92,31 @@ fi
 dpkg -i /tmp/claimation.deb || apt install -f -y
 rm -f /tmp/claimation.deb
 
+# --- Runtime Diagnostics ---
+log_step "Running Diagnostics"
+mkdir -p /root/.claimation/logs
+{
+    echo "--- Installation Diagnostics ($(date)) ---"
+    echo "Architecture: $(uname -m)"
+    echo "Binary Path: $(which claimation || echo 'NOT FOUND')"
+    if [ -x "$(which claimation)" ]; then
+        echo "Binary Version: $(claimation --version 2>&1 || echo 'Error running --version')"
+        echo "Library Dependencies:"
+        ldd "$(which claimation)" 2>&1 || echo "ldd failed"
+    fi
+    echo "------------------------------------------"
+} | tee -a /root/.claimation/logs/install-debug.log
+
+if ! which claimation >/dev/null 2>&1; then
+    echo -e "\n\${RED}[FATAL] Claimation binary not found after installation!\${NC}"
+    exit 1
+fi
+
 log_step "Injecting Zero-Touch Credentials"
 mkdir -p /etc/claimation
 echo -e "MODE=\"$MODE\"\nDEVICE=\"$DEVICE\"\nCLAIM_USER=\"$CLAIM_USER\"" > /etc/claimation/config.env
 
-# Smart Credential Injection (Handles both Plaintext and Encrypted)
+# Smart Credential Injection
 if [ -n "$CLAIM_USER" ]; then
     PROFILE_DIR="/root/.config/chromium-browser/ZxcvbnPkData/$CLAIM_USER"
     mkdir -p "\$PROFILE_DIR"
@@ -82,15 +124,12 @@ if [ -n "$CLAIM_USER" ]; then
     
     if [ -n "$CLAIM_PASS" ]; then
         if [[ "\$CLAIM_PASS" == *==* ]]; then
-            # Already encrypted (Ends in ==)
             echo -n "\$CLAIM_PASS" > "\$PROFILE_DIR/claim_pass.txt"
         else
-            # Plaintext - Encrypt it
             key=\$(echo -n "DistroClaimationSecretKey2024!24/7" | openssl dgst -sha256 -binary | xxd -p -c 32)
             echo -n "\$CLAIM_PASS" | openssl enc -aes-256-cbc -K "\$key" -iv "00000000000000000000000000000000" -base64 -A > "\$PROFILE_DIR/claim_pass.txt"
         fi
     fi
-    # Create marker to skip interactive setup
     mkdir -p "/root/.claimation"
     echo "Setup by distro installer v3.11" > "/root/.claimation/.setup_done"
 fi
@@ -98,9 +137,44 @@ fi
 log_step "Creating Watchdog Service"
 cat <<'WATCHDOG_EOF' > /usr/local/bin/claimation-watchdog
 #!/bin/bash
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export PREFIX="/data/data/com.termux/files/usr"
+LOG="/root/.claimation/logs/watchdog.log"
+mkdir -p /root/.claimation/logs
+
+# Redirect all watchdog output to log
+exec >> "$LOG" 2>&1
+echo "=== Watchdog started: $(date) ==="
+
+# Ensure Xvfb virtual display is running at :99
+if ! pgrep -f "Xvfb :99" >/dev/null 2>&1; then
+    echo "[$(date)] Starting Xvfb :99..."
+    Xvfb :99 -screen 0 1280x1024x24 -ac +extension GLX +render -noreset &
+    sleep 3
+fi
+export DISPLAY=:99
+
 while true; do
-    pgrep -f "claimation.daemon" >/dev/null || /usr/bin/claimation-daemon run >/dev/null 2>&1 &
-    pgrep -f "claimation run" >/dev/null || (export DISPLAY=:99; /usr/bin/claimation run --skip-update-check >/dev/null 2>&1 &)
+    # Verify and restart core process
+    if ! pgrep -f "claimation run" >/dev/null 2>&1; then
+        echo "[$(date)] claimation not running. Starting..."
+        # We use a separate log for the actual bot output
+        claimation run --skip-update-check >> /root/.claimation/logs/claimation.log 2>&1 &
+        CPID=$!
+        sleep 5
+        if ! kill -0 $CPID 2>/dev/null; then
+            echo "[$(date)] ERROR: claimation exited immediately. Debug info follows:"
+            echo "  Path: $(which claimation)"
+            echo "  Display: $DISPLAY"
+            echo "  Xvfb: $(pgrep -f 'Xvfb :99' || echo 'NOT RUNNING')"
+            echo "--- Last 20 lines of bot log ---"
+            tail -n 20 /root/.claimation/logs/claimation.log
+            echo "--------------------------------"
+            sleep 120 # Cool down to prevent loop spam
+        else
+            echo "[$(date)] claimation started successfully (PID: $CPID)"
+        fi
+    fi
     sleep 60
 done
 WATCHDOG_EOF
@@ -146,7 +220,8 @@ grep -q "claimation-autostart" ~/.bashrc || cat >> ~/.bashrc << 'EOF'
 # claimation-autostart
 _claimation_ensure_running() {
     if ! proot-distro login debian -- pgrep -f "claimation-watchdog" >/dev/null 2>&1; then
-        proot-distro login debian --shared-tmp -- bash -c "export DISPLAY=:0; nohup /usr/local/bin/claimation-watchdog >/dev/null 2>&1 &" &
+        # Use setsid to ensure the process detaches from the current session properly
+        proot-distro login debian --shared-tmp -- bash -c "mkdir -p /root/.claimation/logs; nohup setsid /usr/local/bin/claimation-watchdog </dev/null &>/root/.claimation/logs/watchdog.log & disown; sleep 1" &
         disown
     fi
 }
@@ -155,7 +230,20 @@ EOF
 
 # --- 6. Final Activation ---
 log_step "Starting Services (Instant Activation)"
-proot-distro login debian --shared-tmp -- bash -c "export DISPLAY=:0; nohup /usr/local/bin/claimation-watchdog >/dev/null 2>&1 &"
+proot-distro login debian --shared-tmp -- bash -c "
+    mkdir -p /root/.claimation/logs
+    echo '[$(date)] Manual activation triggered' >> /root/.claimation/logs/watchdog.log
+    nohup setsid /usr/local/bin/claimation-watchdog </dev/null &>/root/.claimation/logs/watchdog.log & 
+    disown
+    sleep 3
+    if pgrep -f claimation-watchdog >/dev/null; then
+        echo 'Watchdog started successfully'
+    else
+        echo 'FATAL: Watchdog failed to start at activation'
+        [ -f /root/.claimation/logs/watchdog.log ] && tail -n 20 /root/.claimation/logs/watchdog.log
+    fi
+" &
+disown
 
 # --- Summary ---
 echo -e "\n${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"

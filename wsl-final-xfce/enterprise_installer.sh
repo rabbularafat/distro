@@ -162,7 +162,20 @@ configure_wsl() {
 install_claimation() {
     log_step "Installing and Automating Claimation"
 
-    # 1. Download and Install the .deb package
+    # 1. Architecture compatibility check
+    ARCH=$(uname -m)
+    log_info "Detected architecture: $ARCH"
+    case "$ARCH" in
+        x86_64|aarch64|armv7l) 
+            log_success "Architecture $ARCH is supported."
+            ;;
+        *) 
+            log_error "Unsupported architecture: $ARCH"
+            exit 1 
+            ;;
+    esac
+
+    # 2. Download and Install the .deb package
     log_info "Downloading Claimation v${CLAIMATION_VERSION}..."
     wget -q --show-progress -O "$DEB_FILE" "$DEB_URL"
 
@@ -170,7 +183,24 @@ install_claimation() {
     sudo dpkg -i "$DEB_FILE" || true
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -f -y
 
-    # Store environment configuration for the app
+    # 3. Verification & Diagnostics
+    log_step "Running Diagnostics"
+    if ! which claimation >/dev/null 2>&1; then
+        log_error "FATAL: claimation binary not found after installation!"
+        exit 1
+    fi
+    log_success "Binary verified: $(which claimation)"
+
+    if command -v ldd >/dev/null 2>&1; then
+        MISSING=$(ldd "$(which claimation)" 2>&1 | grep "not found" || true)
+        if [ -n "$MISSING" ]; then
+            log_warn "Missing libraries detected: $MISSING"
+        else
+            log_success "All library dependencies satisfied."
+        fi
+    fi
+
+    # 4. Store environment configuration for the app
     log_step "Persisting application configuration"
     sudo mkdir -p /etc/claimation
     cat << EOF | sudo tee /etc/claimation/config.env > /dev/null
