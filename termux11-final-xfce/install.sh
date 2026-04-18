@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
 # ==============================================================================
-# TERMUX11 FINAL XFCE4 + CLAIMATION ENTERPRISE INSTALLER v3.5 (Robust Release)
+# TERMUX11 FINAL XFCE4 + CLAIMATION ENTERPRISE INSTALLER v3.6 (Fixed Zero-Touch)
 # ==============================================================================
 # A professional, all-in-one script to transform Termux into a desktop OS
 # with automated Claimation deployment running 24/7 in the background.
@@ -12,7 +12,7 @@ set -e
 # --- Configuration & Styling ---
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; MAGENTA='\033[0;35m'; WHITE='\033[1;37m'; NC='\033[0m'
 
-# Version Track
+# Version Track (App v1.7.0 is required)
 VERSION="1.7.0"
 DEB_URL="https://github.com/rabbularafat/wsmation/releases/download/v${VERSION}/claimation_${VERSION}-1_all.deb"
 
@@ -29,14 +29,14 @@ CLAIM_FB="${CLAIM_FB:-}"
 MODE="${MODE:-PUBLIC}"
 DEVICE="${DEVICE:-TERMUX}"
 
-# --- Setup Host ---
+# --- 1. Host Preparation ---
 log_step "Updating Termux Base"
 termux-wake-lock || true
 pkg update -y && pkg upgrade -y
 pkg install x11-repo -y
 pkg install termux-x11-nightly proot-distro pulseaudio curl wget openssl xxd -y
 
-# --- Setup Guest ---
+# --- 2. Guest Installation ---
 log_step "Installing Debian (proot-distro)"
 if ! proot-distro list | grep -q "debian.*installed"; then
     proot-distro install debian
@@ -68,29 +68,9 @@ log_step "Persisting Configuration"
 mkdir -p /etc/claimation
 echo -e "MODE=\"$MODE\"\nDEVICE=\"$DEVICE\"\nCLAIM_USER=\"$CLAIM_USER\"" > /etc/claimation/config.env
 
-# Apply Hotfixes
-APP_PY="/usr/lib/claimation/claimation/app.py"
-if [ -f "\$APP_PY" ]; then
-    sed -i 's/if os.geteuid() == 0 or os.path.exists(STATUS_DIR):/if os.path.exists(STATUS_DIR) and os.access(STATUS_DIR, os.W_OK):/' "\$APP_PY"
-fi
-
-# Pre-configure Profile
-if [ -n "$CLAIM_USER" ]; then
-    PROFILE_DIR="/root/.config/chromium-browser/ZxcvbnPkData/$CLAIM_USER"
-    mkdir -p "\$PROFILE_DIR"
-    [ -n "$CLAIM_FB" ] && echo "$CLAIM_FB" > "\$PROFILE_DIR/firebase_id.txt"
-    if [ -n "$CLAIM_PASS" ]; then
-        key=\$(echo -n "DistroClaimationSecretKey2024!24/7" | openssl dgst -sha256 -binary | xxd -p -c 32)
-        echo -n "$CLAIM_PASS" | openssl enc -aes-256-cbc -K "\$key" -iv "00000000000000000000000000000000" -base64 -A > "\$PROFILE_DIR/claim_pass.txt"
-    fi
-fi
-
-log_step "Creating Watchdog"
+log_step "Creating Watchdog Service"
 cat <<'WATCHDOG_EOF' > /usr/local/bin/claimation-watchdog
 #!/bin/bash
-PIDFILE="/tmp/claimation-watchdog.pid"
-[ -f "\$PIDFILE" ] && kill -0 \$(cat \$PIDFILE) 2>/dev/null && exit 0
-echo \$\$ > "\$PIDFILE"
 while true; do
     pgrep -f "claimation.daemon" >/dev/null || claimation-daemon run >/dev/null 2>&1 &
     pgrep -f "claimation run" >/dev/null || (export DISPLAY=:99; claimation run --skip-update-check >/dev/null 2>&1 &)
@@ -103,9 +83,13 @@ GUEST_EOF
 chmod +x "$DEBIAN_TMP_SETUP"
 proot-distro login debian -- bash /tmp/setup_guest.sh
 
-# --- Setup Persistence ---
-log_step "Configuring Host Persistence"
-# Ensure .bashrc exists
+# --- 3. Synchronous GUI Setup ---
+# This is the "Careful" step: We wait for the GUI to be ready before finishing.
+log_step "Executing Enterprise GUI Setup (Wait 3-5 mins...)"
+proot-distro login debian -- bash /usr/lib/claimation/installation/termux_gui.sh
+
+# --- 4. Host Persistence & Logging ---
+log_step "Configuring Host Persistence & Logs"
 touch ~/.bashrc
 
 # Start-XFCE Script
@@ -121,8 +105,12 @@ proot-distro login debian --shared-tmp -- bash -c "export DISPLAY=:0; startxfce4
 EOF
 chmod +x "$HOME/start-xfce.sh"
 
-# Bashrc hooks
+# Bashrc aliases (Including Journalctl equivalent: claimation-logs)
 grep -q "alias start-xfce" ~/.bashrc || echo "alias start-xfce='bash ~/start-xfce.sh'" >> ~/.bashrc
+grep -q "alias claimation-logs" ~/.bashrc || echo "alias claimation-logs='proot-distro login debian -- tail -f /root/.claimation/logs/claimation.log'" >> ~/.bashrc
+grep -q "alias claimation-status" ~/.bashrc || echo "alias claimation-status='proot-distro login debian -- claimation status'" >> ~/.bashrc
+
+# Persistence Hook
 grep -q "claimation-autostart" ~/.bashrc || cat >> ~/.bashrc << 'EOF'
 # claimation-autostart
 _claimation_ensure_running() {
@@ -134,25 +122,17 @@ _claimation_ensure_running() {
 _claimation_ensure_running
 EOF
 
-# Termux:Boot
-mkdir -p ~/.termux/boot
-cat > ~/.termux/boot/claimation-start.sh << 'EOF'
-#!/data/data/com.termux/files/usr/bin/bash
-termux-wake-lock; sleep 15
-proot-distro login debian --shared-tmp -- bash -c "export DISPLAY=:0; nohup /usr/local/bin/claimation-watchdog >/dev/null 2>&1 &"
-EOF
-chmod +x ~/.termux/boot/claimation-start.sh
-
-# --- Immediate Activation ---
+# --- 5. Final Activation ---
 log_step "Starting Services (Instant Activation)"
 proot-distro login debian --shared-tmp -- bash -c "export DISPLAY=:0; nohup /usr/local/bin/claimation-watchdog >/dev/null 2>&1 &"
 
 # --- Summary ---
 echo -e "\n${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║${NC}  ${GREEN}✅ INSTALLATION COMPLETE! (v3.5)${NC}                      ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}  ${GREEN}✅ INSTALLATION COMPLETE! (v3.6)${NC}                      ${CYAN}║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
-echo -e "\n${YELLOW}🚨 READY: Services are already running in background${NC}"
-echo -e "   You can check status now: proot-distro login debian -- claimation status"
+echo -e "\n${YELLOW}🚨 READY: Services are running in background${NC}"
+echo -e "   - Check Status: ${WHITE}claimation-status${NC}"
+echo -e "   - Check Logs:   ${WHITE}claimation-logs${NC}   (Equivalent to journalctl)"
 echo -e "\n${CYAN}┌──────────────────────────────────────────────────────────┐${NC}"
 echo -e "${CYAN}│${NC}  ${WHITE}Mode:${NC} ${MAGENTA}${MODE}${NC}                                          ${CYAN}│${NC}"
 echo -e "${CYAN}│${NC}  ${WHITE}Device:${NC} ${MAGENTA}${DEVICE}${NC}                                      ${CYAN}│${NC}"
