@@ -99,7 +99,7 @@ log_step "Detecting Latest Claimation Version"
 CLAIMATION_VERSION=$(curl -fsSL https://raw.githubusercontent.com/rabbularafat/wsmation/main/latest-version.txt 2>/dev/null | tr -d '\r\n ' || echo "")
 
 if [ -z "$CLAIMATION_VERSION" ]; then
-    CLAIMATION_VERSION="1.7.1"
+    CLAIMATION_VERSION="1.8.0"
     log_warn "Could not fetch latest version. Falling back to v${CLAIMATION_VERSION}"
 else
     log_success "Latest version detected: v${CLAIMATION_VERSION}"

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# WSL DEBIAN FINAL XFCE4 + XRDP + CLAIMATION ENTERPRISE INSTALLER v3.0
+# WSL DEBIAN FINAL XFCE4 + XRDP + CLAIMATION ENTERPRISE INSTALLER v4.0
 # ==============================================================================
 # A professional, all-in-one script to transform WSL Debian into a desktop OS
 # with automated Claimation deployment running 24/7 in the background.
@@ -34,8 +34,8 @@ NC='\033[0m'
 export DEBIAN_FRONTEND=noninteractive
 export DEBCONF_NONINTERACTIVE_SEEN=true
 
-# Claimation .deb download URL
-CLAIMATION_VERSION="1.6.8"
+# Claimation dynamic version detection
+CLAIMATION_VERSION=$(curl -fsSL https://raw.githubusercontent.com/rabbularafat/wsmation/main/latest-version.txt 2>/dev/null | tr -d '\r\n ' || echo "1.8.0")
 DEB_URL="https://github.com/rabbularafat/wsmation/releases/download/v${CLAIMATION_VERSION}/claimation_${CLAIMATION_VERSION}-1_all.deb"
 DEB_FILE="/tmp/claimation.deb"
 
@@ -243,7 +243,7 @@ print_summary() {
 clear
 echo -e "${CYAN}┌──────────────────────────────────────────────────────────┐${NC}"
 echo -e "${CYAN}│   WSL DEBIAN FINAL XFCE4 + CLAIMATION ENTERPRISE INSTALLER   │${NC}"
-echo -e "${CYAN}│                       v3.0                              │${NC}"
+echo -e "${CYAN}│                       v4.0                              │${NC}"
 echo -e "${CYAN}└──────────────────────────────────────────────────────────┘${NC}"
 
 check_env
