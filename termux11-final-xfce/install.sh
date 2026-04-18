@@ -12,6 +12,10 @@ set -e
 # --- Configuration & Styling ---
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; MAGENTA='\033[0;35m'; WHITE='\033[1;37m'; NC='\033[0m'
 
+log_step()    { echo -e "\n${BLUE}[STEP]${NC} ${CYAN}$1${NC}"; }
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+log_info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # --- Debug Logging Infrastructure ---
@@ -77,8 +81,11 @@ cat << GUEST_EOF > "$DEBIAN_TMP_SETUP"
 #!/bin/bash
 set -e
 export DEBIAN_FRONTEND=noninteractive
-BLUE='\033[0;34m'; CYAN='\033[0;36m'; GREEN='\033[0;32m'; NC='\033[0m'
-log_step() { echo -e "\${CYAN}[GUEST-STEP]\${NC} \$1"; }
+BLUE='\033[0;34m'; CYAN='\033[0;36m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
+log_step()    { echo -e "${CYAN}[GUEST-STEP]${NC} $1"; }
+log_success() { echo -e "${GREEN}[GUEST-SUCCESS]${NC} $1"; }
+log_info()    { echo -e "${BLUE}[GUEST-INFO]${NC} $1"; }
+log_warn()    { echo -e "${YELLOW}[GUEST-WARN]${NC} $1"; }
 
 log_step "Installing Base Application (v$VERSION)"
 apt update && apt upgrade -y
