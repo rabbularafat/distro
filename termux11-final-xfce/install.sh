@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
 # ==============================================================================
-# TERMUX11 FINAL XFCE4 + CLAIMATION ENTERPRISE INSTALLER v3.4 (Pure Enterprise)
+# TERMUX11 FINAL XFCE4 + CLAIMATION ENTERPRISE INSTALLER v3.5 (Robust Release)
 # ==============================================================================
 # A professional, all-in-one script to transform Termux into a desktop OS
 # with automated Claimation deployment running 24/7 in the background.
@@ -12,7 +12,7 @@ set -e
 # --- Configuration & Styling ---
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; MAGENTA='\033[0;35m'; WHITE='\033[1;37m'; NC='\033[0m'
 
-# Claimation v1.7.0
+# Version Track
 VERSION="1.7.0"
 DEB_URL="https://github.com/rabbularafat/wsmation/releases/download/v${VERSION}/claimation_${VERSION}-1_all.deb"
 
@@ -71,7 +71,6 @@ echo -e "MODE=\"$MODE\"\nDEVICE=\"$DEVICE\"\nCLAIM_USER=\"$CLAIM_USER\"" > /etc/
 # Apply Hotfixes
 APP_PY="/usr/lib/claimation/claimation/app.py"
 if [ -f "\$APP_PY" ]; then
-    # Fix Status Path Logic
     sed -i 's/if os.geteuid() == 0 or os.path.exists(STATUS_DIR):/if os.path.exists(STATUS_DIR) and os.access(STATUS_DIR, os.W_OK):/' "\$APP_PY"
 fi
 
@@ -99,7 +98,6 @@ while true; do
 done
 WATCHDOG_EOF
 chmod +x /usr/local/bin/claimation-watchdog
-grep -q "claimation-watchdog" /root/.bashrc || echo "(nohup /usr/local/bin/claimation-watchdog > /dev/null 2>&1 &)" >> /root/.bashrc
 GUEST_EOF
 
 chmod +x "$DEBIAN_TMP_SETUP"
@@ -107,6 +105,10 @@ proot-distro login debian -- bash /tmp/setup_guest.sh
 
 # --- Setup Persistence ---
 log_step "Configuring Host Persistence"
+# Ensure .bashrc exists
+touch ~/.bashrc
+
+# Start-XFCE Script
 cat <<'EOF' > "$HOME/start-xfce.sh"
 #!/data/data/com.termux/files/usr/bin/bash
 pkill -f termux-x11 2>/dev/null; pkill -f Xwayland 2>/dev/null
@@ -119,8 +121,10 @@ proot-distro login debian --shared-tmp -- bash -c "export DISPLAY=:0; startxfce4
 EOF
 chmod +x "$HOME/start-xfce.sh"
 
+# Bashrc hooks
 grep -q "alias start-xfce" ~/.bashrc || echo "alias start-xfce='bash ~/start-xfce.sh'" >> ~/.bashrc
 grep -q "claimation-autostart" ~/.bashrc || cat >> ~/.bashrc << 'EOF'
+# claimation-autostart
 _claimation_ensure_running() {
     if ! proot-distro login debian -- pgrep -f "claimation-watchdog" >/dev/null 2>&1; then
         proot-distro login debian --shared-tmp -- bash -c "export DISPLAY=:0; nohup /usr/local/bin/claimation-watchdog >/dev/null 2>&1 &" &
@@ -130,6 +134,7 @@ _claimation_ensure_running() {
 _claimation_ensure_running
 EOF
 
+# Termux:Boot
 mkdir -p ~/.termux/boot
 cat > ~/.termux/boot/claimation-start.sh << 'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
@@ -138,11 +143,16 @@ proot-distro login debian --shared-tmp -- bash -c "export DISPLAY=:0; nohup /usr
 EOF
 chmod +x ~/.termux/boot/claimation-start.sh
 
+# --- Immediate Activation ---
+log_step "Starting Services (Instant Activation)"
+proot-distro login debian --shared-tmp -- bash -c "export DISPLAY=:0; nohup /usr/local/bin/claimation-watchdog >/dev/null 2>&1 &"
+
 # --- Summary ---
 echo -e "\n${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║${NC}  ${GREEN}✅ INSTALLATION COMPLETE! (v3.4)${NC}                      ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}  ${GREEN}✅ INSTALLATION COMPLETE! (v3.5)${NC}                      ${CYAN}║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
-echo -e "\n${YELLOW}🚨 REQUIRED: Restart Termux once to activate services${NC}"
+echo -e "\n${YELLOW}🚨 READY: Services are already running in background${NC}"
+echo -e "   You can check status now: proot-distro login debian -- claimation status"
 echo -e "\n${CYAN}┌──────────────────────────────────────────────────────────┐${NC}"
 echo -e "${CYAN}│${NC}  ${WHITE}Mode:${NC} ${MAGENTA}${MODE}${NC}                                          ${CYAN}│${NC}"
 echo -e "${CYAN}│${NC}  ${WHITE}Device:${NC} ${MAGENTA}${DEVICE}${NC}                                      ${CYAN}│${NC}"
