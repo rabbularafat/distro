@@ -62,7 +62,7 @@ setup_termux() {
     termux-wake-lock || true
     pkg update -y && pkg upgrade -y
     pkg install x11-repo -y
-    pkg install termux-x11-nightly proot-distro pulseaudio curl wget x11-xserver-utils openssl xxd -y
+    pkg install termux-x11-nightly proot-distro pulseaudio curl wget openssl xxd -y
 }
 
 # ==============================================================================
