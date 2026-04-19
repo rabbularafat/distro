@@ -109,11 +109,92 @@ install_system_deps() {
     log_success "System updated."
 }
 
-# Modules 2 & 3 (GUI installation) have been moved inside the application package.
-# This ensures faster setup and better security for the core concept.
+# ==============================================================================
+# MODULE 2: XFCE Desktop + Display Server (DEVELOPMENT mode only)
+# ==============================================================================
+install_gui() {
+    if [ "$MODE" != "DEVELOPMENT" ]; then
+        log_info "PUBLIC mode — skipping GUI installation (headless)."
+        return
+    fi
 
+    log_step "Installing XFCE4 Desktop Environment"
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        xfce4 xfce4-goodies
+    log_success "XFCE4 installed."
 
+    log_step "Installing XRDP + Xvfb"
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        xrdp xvfb x11-xserver-utils xclip
+    log_success "XRDP + Xvfb installed."
 
+    # Configure .xsession for XFCE desktop session
+    log_info "Configuring .xsession..."
+    cat > ~/.xsession << 'XSESSION_EOF'
+#!/bin/bash
+xhost +local:
+systemctl --user set-environment DISPLAY=$DISPLAY
+systemctl --user set-environment XAUTHORITY=$XAUTHORITY
+systemctl --user restart claimation-app.service 2>/dev/null || true
+xfce4-session
+XSESSION_EOF
+    chmod +x ~/.xsession
+
+    # Allow console/anybody to start X
+    sudo sed -i 's/console/anybody/g' /etc/X11/Xwrapper.config 2>/dev/null || true
+
+    # Enable and start XRDP now
+    sudo systemctl enable xrdp 2>/dev/null || true
+    sudo systemctl start xrdp 2>/dev/null || true
+    log_success "XRDP enabled and started."
+}
+
+# ==============================================================================
+# MODULE 3: Xvfb Headless Display (all modes)
+# ==============================================================================
+install_xvfb() {
+    if [ "$MODE" = "DEVELOPMENT" ]; then
+        # Already installed by install_gui()
+        log_info "Xvfb already installed with XRDP in DEVELOPMENT mode."
+    else
+        log_step "Installing Xvfb (Headless Only)"
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xvfb x11-xserver-utils xclip
+    fi
+
+    # Create Xvfb systemd user service
+    log_step "Creating Xvfb systemd user service"
+    mkdir -p ~/.config/systemd/user
+    cat > ~/.config/systemd/user/xvfb.service << XVFB_EOF
+[Unit]
+Description=Xvfb Virtual Framebuffer (Display ${XVFB_DISPLAY})
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/Xvfb ${XVFB_DISPLAY} -screen 0 ${XVFB_RESOLUTION} -ac +extension GLX +render -noreset
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+XVFB_EOF
+
+    # Override claimation-app.service to depend on xvfb
+    mkdir -p ~/.config/systemd/user/claimation-app.service.d
+    cat > ~/.config/systemd/user/claimation-app.service.d/override.conf << OVERRIDE_EOF
+[Unit]
+After=xvfb.service
+Requires=xvfb.service
+
+[Service]
+Environment=DISPLAY=${XVFB_DISPLAY}
+OVERRIDE_EOF
+
+    # Enable xvfb
+    mkdir -p ~/.config/systemd/user/default.target.wants
+    ln -sf ~/.config/systemd/user/xvfb.service ~/.config/systemd/user/default.target.wants/xvfb.service 2>/dev/null || true
+
+    log_success "Xvfb service configured."
+}
 
 # ==============================================================================
 # MODULE 4: WSL Optimizations
@@ -219,20 +300,34 @@ print_summary() {
     echo -e "${YELLOW}🚨 REQUIRED: Restart WSL once to activate systemd${NC}"
     echo -e "   Run this in ${WHITE}Windows PowerShell${NC}:"
     echo -e "   ${MAGENTA}wsl --shutdown${NC}"
-    echo -e "   Then reopen your Debian terminal."
+    echo -e "   Then reopen your Debian terminal and ${WHITE}wait 15-30 seconds.${NC}"
 
     echo ""
     echo -e "${CYAN}┌──────────────────────────────────────────────────────────┐${NC}"
     echo -e "${CYAN}│${NC}  ${WHITE}What happens after restart:${NC}                             ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}                                                          ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Systemd starts all enabled services                   ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Claimation will initialize itself (WSL/Termux)        ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Security Monitor active (instantly punishes RDP/VNC)  ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}✓${NC} Auto-updater daemon runs as system service            ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}                                                          ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${WHITE}Mode:${NC} ${MAGENTA}${MODE}${NC}                                          ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${WHITE}Device:${NC} ${MAGENTA}${DEVICE}${NC}                                      ${CYAN}│${NC}"
     echo -e "${CYAN}└──────────────────────────────────────────────────────────┘${NC}"
 
+    if [ "$MODE" = "DEVELOPMENT" ]; then
+        echo ""
+        echo -e "${GREEN}🖥️  RDP Connection (DEVELOPMENT mode):${NC}"
+        echo -e "   ${WHITE}1.${NC} Run ${MAGENTA}wsl --shutdown${NC} from PowerShell"
+        echo -e "   ${WHITE}2.${NC} Reopen Debian terminal (this starts systemd + XRDP)"
+        echo -e "   ${WHITE}3.${NC} Wait ${YELLOW}~15-30 seconds${NC} for XRDP to start listening"
+        echo -e "   ${WHITE}4.${NC} Connect via RDP to ${CYAN}localhost:3389${NC}"
+        echo -e ""
+        echo -e "   ${YELLOW}Diagnostic commands (run after restart):${NC}"
+        echo -e "   ${MAGENTA}sudo systemctl status xrdp${NC}        # is XRDP running?"
+        echo -e "   ${MAGENTA}ss -tlnp | grep 3389${NC}              # is port 3389 open?"
+        echo -e "   ${MAGENTA}journalctl -u xrdp --no-pager -n 20${NC}  # XRDP logs"
+        echo -e "   ${MAGENTA}systemctl --user status claimation-app${NC}  # app status"
+    fi
 
     echo ""
 }
@@ -250,6 +345,8 @@ check_env
 setup_automation_permissions
 preconfigure_keyboard
 install_system_deps
+install_gui
+install_xvfb
 configure_wsl
 install_claimation
 print_summary
