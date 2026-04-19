@@ -56,6 +56,11 @@ The installer is hard-coded to follow high-security display policies:
 | `systemctl --user status claimation-app` | Check the background service. |
 | `systemctl --user status xvfb` | Check the virtual display server. |
 | `ip addr \| grep eth0` | Get your IP for Remote Desktop (DEVELOPMENT mode only). |
+| `sudo systemctl status xrdp` | is XRDP running? |
+| `ss -tlnp | grep 3389` | is port 3389 open? |
+| `hostname -I` | Get your IP for Remote Desktop (DEVELOPMENT mode only). |
+| `journalctl -u xrdp --no-pager -n 20` | XRDP logs |
+| `systemctl --user status claimation-app` | app status |
 
 ---
 
